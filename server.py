@@ -38,6 +38,22 @@ ROOT = Path(__file__).resolve().parent.parent
 spec = importlib.util.spec_from_file_location('autobuilder_next_work', ROOT / 'scripts/next_work.py')
 queue = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(queue)
+review_spec = importlib.util.spec_from_file_location('autobuilder_review_decisions', ROOT / 'scripts/review_decisions.py')
+reviews = importlib.util.module_from_spec(review_spec)
+review_spec.loader.exec_module(reviews)
+
+
+def decisions_data(root=None):
+    """T4-FB: every project's record of the decisions Autobuilder took on its own, with the reviews appended beside
+    them (M-H); unreviewed first, then newest first. Read only -- reviews are written by scripts/review_decisions.py."""
+    try:
+        rows = [{'project': d['project'], 'entry': d['entry'], 'reviews': d['reviews']} for d in reviews.load(root)]
+        rows.sort(key=lambda d: d['entry'].get('at', ''), reverse=True)
+        rows.sort(key=lambda d: bool(d['reviews']))
+        return {'ok': True, 'data': {'source': 'data/*/meta/decisions.ndjson', 'decisions': rows,
+                'unreviewed': sum(1 for d in rows if not d['reviews'])}}
+    except (OSError, ValueError) as error:
+        return {'ok': False, 'error': str(error)}
 
 
 def development_data(path=None, ticket_id=None):
@@ -87,6 +103,7 @@ class Handler(SimpleHTTPRequestHandler):
                         for key, (target, path) in ROUTES.items()}
                 result = {key: job.result() for key, job in jobs.items()}
             result['development'] = development_data()
+            result['decisions'] = decisions_data()
             result['meta'] = {'ok': True, 'data': collect()}
             self.send_json(result)
         elif self.path.startswith('/api/'):

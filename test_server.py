@@ -45,5 +45,30 @@ class DevelopmentQueueTest(unittest.TestCase):
         self.assertFalse(development_data('/does-not-exist/roadmap.md')['ok'])
 
 
+class DecisionRecordTest(unittest.TestCase):
+    def test_unreviewed_first_with_reviews_beside_each(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import decisions_data
+        with tempfile.TemporaryDirectory() as root:
+            meta = Path(root) / 'data' / 'p' / 'meta'
+            meta.mkdir(parents=True)
+            (meta / 'decisions.ndjson').write_text(
+                json.dumps({'id': 'dec-1', 'at': '2026-11-21T10:00:00Z', 'kind': 'DRAFT_CHECKED'}) + '\n' +
+                json.dumps({'id': 'dec-2', 'at': '2026-11-21T09:00:00Z', 'kind': 'DRAFT_CHECKED'}) + '\n{torn')
+            (meta / 'decision-reviews.ndjson').write_text(
+                json.dumps({'decision': 'dec-1', 'verdict': 'AGREE', 'reason': 'r'}) + '\n')
+            value = decisions_data(root)['data']
+            self.assertEqual([d['entry']['id'] for d in value['decisions']], ['dec-2', 'dec-1'])
+            self.assertEqual(value['unreviewed'], 1)
+            self.assertEqual(value['decisions'][1]['reviews'][0]['verdict'], 'AGREE')
+
+    def test_no_records_is_empty_not_an_error(self):
+        import tempfile
+        from server import decisions_data
+        with tempfile.TemporaryDirectory() as root:
+            self.assertEqual(decisions_data(root)['data']['decisions'], [])
+
+
 if __name__ == '__main__':
     unittest.main()
