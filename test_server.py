@@ -57,11 +57,11 @@ class DecisionRecordTest(unittest.TestCase):
                 json.dumps({'id': 'dec-1', 'at': '2026-11-21T10:00:00Z', 'kind': 'DRAFT_CHECKED'}) + '\n' +
                 json.dumps({'id': 'dec-2', 'at': '2026-11-21T09:00:00Z', 'kind': 'DRAFT_CHECKED'}) + '\n{torn')
             (meta / 'decision-reviews.ndjson').write_text(
-                json.dumps({'decision': 'dec-1', 'verdict': 'AGREE', 'reason': 'r'}) + '\n')
+                json.dumps({'decision': 'dec-1', 'assessment': 'AGREE', 'reason': 'r'}) + '\n')
             value = decisions_data(root)['data']
             self.assertEqual([d['entry']['id'] for d in value['decisions']], ['dec-2', 'dec-1'])
             self.assertEqual(value['unreviewed'], 1)
-            self.assertEqual(value['decisions'][1]['reviews'][0]['verdict'], 'AGREE')
+            self.assertEqual(value['decisions'][1]['reviews'][0]['assessment'], 'AGREE')
 
     def test_no_records_is_empty_not_an_error(self):
         import tempfile
