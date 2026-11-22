@@ -58,8 +58,10 @@ class DecisionRecordTest(unittest.TestCase):
                 json.dumps({'id': 'dec-2', 'at': '2026-11-21T09:00:00Z', 'kind': 'DRAFT_CHECKED'}) + '\n{torn')
             (meta / 'decision-reviews.ndjson').write_text(
                 json.dumps({'decision': 'dec-1', 'assessment': 'AGREE', 'reason': 'r'}) + '\n')
+            with open(meta / 'decisions.ndjson', 'a') as f:
+                f.write('\n' + json.dumps({'id': 'T1-A#2', 'at': '2026-11-21T08:00:00Z', 'follows': 'review of dec-1 at x'}) + '\n')
             value = decisions_data(root)['data']
-            self.assertEqual([d['entry']['id'] for d in value['decisions']], ['dec-2', 'dec-1'])
+            self.assertEqual([d['entry']['id'] for d in value['decisions']], ['dec-2', 'dec-1', 'T1-A#2'])
             self.assertEqual(value['unreviewed'], 1)
             self.assertEqual(value['decisions'][1]['reviews'][0]['assessment'], 'AGREE')
 
