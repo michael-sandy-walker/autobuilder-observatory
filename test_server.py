@@ -70,5 +70,25 @@ class DecisionRecordTest(unittest.TestCase):
             self.assertEqual(decisions_data(root)['data']['decisions'], [])
 
 
+class ReviewWriteTest(unittest.TestCase):
+    def test_a_review_is_appended_beside_its_decision_and_a_bad_one_refused(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import append_review
+        with tempfile.TemporaryDirectory() as root:
+            own = Path(root) / '.claude-memory'
+            own.mkdir()
+            (own / 'decisions.ndjson').write_text(json.dumps({'id': 'T1-BA#1', 'at': '2026-11-22T01:00:00Z'}) + '\n')
+            ok = append_review(json.dumps({'decision': 'T1-BA#1', 'assessment': 'disagree', 'reason': 'wrong',
+                                           'reviewer': 'op'}).encode(), root)
+            self.assertTrue(ok['ok'])
+            line = json.loads((own / 'decision-reviews.ndjson').read_text())
+            self.assertEqual((line['decision'], line['assessment'], line['reviewer']), ('T1-BA#1', 'DISAGREE', 'op'))
+            self.assertFalse(append_review(json.dumps({'decision': 'T1-BA#1', 'assessment': 'MAYBE', 'reason': 'x'}).encode(), root)['ok'])
+            self.assertFalse(append_review(json.dumps({'decision': 'nope', 'assessment': 'AGREE', 'reason': 'x'}).encode(), root)['ok'])
+            self.assertFalse(append_review(json.dumps({'decision': 'T1-BA#1', 'assessment': 'AGREE', 'reason': ' '}).encode(), root)['ok'])
+            self.assertEqual(len((own / 'decision-reviews.ndjson').read_text().splitlines()), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

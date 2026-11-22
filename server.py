@@ -1,4 +1,5 @@
-"""Local Observatory host and bounded, read-only proxy for Autobuilder APIs."""
+"""Local Observatory host and bounded, read-only proxy for Autobuilder APIs. Its one write: a review appended beside
+one of Autobuilder's decisions (POST /api/reviews)."""
 from meta import collect, document
 import argparse
 import json
@@ -78,6 +79,21 @@ def development_data(path=None, ticket_id=None):
         return {'ok': False, 'error': str(error)}
 
 
+def append_review(body, root=None):
+    """T4-EZ, M-H: the Observatory's one write -- a review appended beside a decision (a Claude session's or the
+    operator's). It never changes a decision or anything else; Autobuilder follows the review at its next proposal."""
+    try:
+        value = json.loads(body or b'{}')
+        rec = reviews.review(str(value.get('decision', '')), str(value.get('assessment', '')).upper(),
+                             str(value.get('reason', '')), str(value.get('reviewer') or 'operator'), root=root,
+                             project=value.get('project') or None)
+        return {'ok': True, 'data': rec}
+    except SystemExit as refused:
+        return {'ok': False, 'error': str(refused)}
+    except (OSError, ValueError) as error:
+        return {'ok': False, 'error': str(error)}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def send_json(self, value, status=200):
         body = json.dumps(value).encode()
@@ -87,6 +103,14 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_header('Content-Length', str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+
+    def do_POST(self):
+        if self.path != '/api/reviews':
+            self.send_error(404)
+            return
+        length = int(self.headers.get('Content-Length') or 0)
+        value = append_review(self.rfile.read(min(length, 64 * 1024)))
+        self.send_json(value, 200 if value['ok'] else 400)
 
     def do_GET(self):
         if self.path.startswith('/api/documents/'):

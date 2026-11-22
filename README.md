@@ -35,6 +35,13 @@ window, not its full persisted history. Import conflicts show receiving and impo
 values. Decisions and model consultations use existing Autobuilder controls;
 this local monitor does not mutate projects or initiate LLM calls.
 
+Own decisions lists the decisions Autobuilder took on its own: the drafts it checked after each run (each
+project's `meta/decisions.ndjson`) and what it did to its roadmap (`.claude-memory/decisions.ndjson`: tickets
+created, changed, retracted), unreviewed first. Each entry has a review form; it is the Observatory's one write and
+only APPENDS a review (AGREE / DISAGREE / QUESTION with a reason) beside the entry, in `decision-reviews.ndjson`.
+Autobuilder follows a review at its next proposal: DISAGREE on a ticket it created retracts it, QUESTION and AGREE
+are appended to the ticket. The same is done from a terminal with `scripts/review_decisions.py`.
+
 Export downloads the latest live snapshot. The original example implementation
 is preserved in `dist/app.js` but is no longer loaded. Browser records from the
 hosted site are not copied to this origin. Local changes are not published.
