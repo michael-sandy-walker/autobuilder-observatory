@@ -1,7 +1,7 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const views=[['overview','◫','Overview'],['roadmap','⌁','Roadmap'],['tickets','▤','Tickets'],['agents','⬡','Agent roles'],['changes','↗','Changes'],['merges','⑂','Merge workbench'],['history','◷','Decision history'],['decisions','⚖','Own decisions'],['evaluations','✓','Evaluations'],['signals','≋','Signals'],['runtime','↻','Target run']];
-let snapshot={},updated=null,busy=false,ticketSearch='',ticketStatus='Live work',ticketTier='All tiers',ticketDetail=null,documentDetail=null,walkAt=0,walkNote='';
+const openDetails=new Set();let snapshot={},updated=null,busy=false,ticketSearch='',ticketStatus='Live work',ticketTier='All tiers',ticketDetail=null,documentDetail=null,walkAt=0,walkNote='';
 const data=k=>snapshot[k]?.ok?snapshot[k].data:null;
 const panel=(title,body)=>`<section class="panel"><div class="panel-head"><h2>${esc(title)}</h2></div><div class="pad">${body}</div></section>`;
 const empty=t=>`<p>${esc(t)}</p>`;
@@ -129,6 +129,9 @@ ${r?`<div class="row" style="border-left:3px solid currentColor;padding-left:8px
  const provenance=panel('Sources for this view',sources.map(k=>`<div class="row"><div><small>${esc(sourcePaths[k])}</small><p>${snapshot[k]?.ok?'Connected':esc(snapshot[k]?.error||'Waiting for first response')}</p></div>${badge(snapshot[k]?.ok?'Available':'Unavailable')}</div>`).join(''));
  if(!available)html=empty('Data is unavailable. This does not mean that the project has no records.');
  $('#app').innerHTML=provenance+html;
+ // The 5-second refresh rebuilds the page; a section the reader opened stays open. A section is known by its summary
+ // text and the heading of the panel it sits in, so the key survives a rebuild of the same content.
+ document.querySelectorAll('#app details').forEach(d=>{const s=d.querySelector('summary'),h=d.closest('section')?.querySelector('h2');d.dataset.key=(h?h.textContent:'')+'|'+(s?s.textContent:'');if(openDetails.has(d.dataset.key))d.open=true;d.addEventListener('toggle',()=>{d.open?openDetails.add(d.dataset.key):openDetails.delete(d.dataset.key)})});
  document.querySelectorAll('[data-document]').forEach(b=>b.onclick=async()=>{const path=b.dataset.document;documentDetail={path,text:'Loading…'};render();try{const r=await fetch('/api/documents/'+encodeURIComponent(path),{cache:'no-store'}),v=await r.json();documentDetail=v.ok?v.data:{path,error:v.error}}catch(e){documentDetail={path,error:e.message}}render()});
  const walkOpen=()=>(data('decisions')?.decisions||[]).filter(d=>!d.reviews.length&&d.needs_review!==false).sort((a,b)=>(a.entry.at||'').localeCompare(b.entry.at||''));
  const postReview=async body=>{const r=await fetch('/api/reviews',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.json()};
