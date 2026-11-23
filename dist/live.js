@@ -128,10 +128,17 @@ ${r?`<div class="row" style="border-left:3px solid currentColor;padding-left:8px
  $('#subtitle').textContent=available===sources.length?'Autobuilder development evidence · refreshes every 5 seconds':available?'Some API sources are unavailable · retrying every 5 seconds':'This view cannot load its API sources · retrying every 5 seconds';
  const provenance=panel('Sources for this view',sources.map(k=>`<div class="row"><div><small>${esc(sourcePaths[k])}</small><p>${snapshot[k]?.ok?'Connected':esc(snapshot[k]?.error||'Waiting for first response')}</p></div>${badge(snapshot[k]?.ok?'Available':'Unavailable')}</div>`).join(''));
  if(!available)html=empty('Data is unavailable. This does not mean that the project has no records.');
+ // Scroll positions of the page's text boxes (a long decision, a log excerpt) and of the page itself survive the
+ // rebuild too: a box is known by the heading of its panel and its place among that panel's boxes.
+ const boxes=()=>{const m=new Map();document.querySelectorAll('#app section').forEach(sec=>{const h=sec.querySelector('h2');[...sec.querySelectorAll('pre')].forEach((el,i)=>m.set((h?h.textContent:'')+'|'+i,el))});return m};
+ const scrolled=new Map();boxes().forEach((el,k)=>{if(el.scrollTop>0||el.scrollLeft>0)scrolled.set(k,[el.scrollTop,el.scrollLeft])});
+ const pageY=window.scrollY;
  $('#app').innerHTML=provenance+html;
  // The 5-second refresh rebuilds the page; a section the reader opened stays open. A section is known by its summary
  // text and the heading of the panel it sits in, so the key survives a rebuild of the same content.
  document.querySelectorAll('#app details').forEach(d=>{const s=d.querySelector('summary'),h=d.closest('section')?.querySelector('h2');d.dataset.key=(h?h.textContent:'')+'|'+(s?s.textContent:'');if(openDetails.has(d.dataset.key))d.open=true;d.addEventListener('toggle',()=>{d.open?openDetails.add(d.dataset.key):openDetails.delete(d.dataset.key)})});
+ if(scrolled.size)boxes().forEach((el,k)=>{const v=scrolled.get(k);if(v){el.scrollTop=v[0];el.scrollLeft=v[1]}});
+ window.scrollTo(0,pageY);
  document.querySelectorAll('[data-document]').forEach(b=>b.onclick=async()=>{const path=b.dataset.document;documentDetail={path,text:'Loading…'};render();try{const r=await fetch('/api/documents/'+encodeURIComponent(path),{cache:'no-store'}),v=await r.json();documentDetail=v.ok?v.data:{path,error:v.error}}catch(e){documentDetail={path,error:e.message}}render()});
  const walkOpen=()=>(data('decisions')?.decisions||[]).filter(d=>!d.reviews.length&&d.needs_review!==false).sort((a,b)=>(a.entry.at||'').localeCompare(b.entry.at||''));
  const postReview=async body=>{const r=await fetch('/api/reviews',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});return r.json()};
