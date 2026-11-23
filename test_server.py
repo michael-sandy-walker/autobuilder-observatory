@@ -94,3 +94,29 @@ class ReviewWriteTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CarryAttemptTest(unittest.TestCase):
+    """T4-FG rule 7: a ticket's carry-through attempts, read as written, only the ticket's own."""
+
+    def test_selection_run_evidence_and_outcome_of_the_tickets_attempts(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import carry_attempts
+        with tempfile.TemporaryDirectory() as root:
+            mine = Path(root, '2026-11-23_10-00-00'); mine.mkdir()
+            (mine / 'selection.json').write_text(json.dumps({'ticket': 'T1-AA', 'decision': 'T1-AA#1', 'pinned': 'abc'}))
+            (mine / 'run.txt').write_text('2026-11-23_10-05-00\n')
+            (mine / 'evidence.json').write_text(json.dumps({'graded_tree': 'the final tree', 'regressions': [], 'secret': 1}))
+            (mine / 'conclude.out').write_text('CARRY-CONCLUDE: decision=T1-AA#2\n')
+            other = Path(root, '2026-11-23_11-00-00'); other.mkdir()
+            (other / 'selection.json').write_text(json.dumps({'ticket': 'T1-AB'}))
+            got = carry_attempts('T1-AA', root=root)
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]['run'], '2026-11-23_10-05-00')
+        self.assertEqual(got[0]['evidence'], {'graded_tree': 'the final tree', 'regressions': []})
+        self.assertEqual(got[0]['outcome'], 'CARRY-CONCLUDE: decision=T1-AA#2')
+
+    def test_no_attempts_directory_is_empty(self):
+        from server import carry_attempts
+        self.assertEqual(carry_attempts('T1-AA', root='/nonexistent/carry'), [])

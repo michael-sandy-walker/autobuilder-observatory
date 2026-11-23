@@ -47,6 +47,20 @@ function render(){
   const rows=(dev?.tickets||[]).filter(t=>(ticketStatus==='All statuses'||(ticketStatus==='Live work'?['open','in progress'].includes(t.status):t.status===ticketStatus))&&(ticketTier==='All tiers'||t.tier===ticketTier)&&`${t.id} ${t.title}`.toLowerCase().includes(ticketSearch.toLowerCase()));
   html+=panel(`${rows.length} matching development tickets`,rows.length?`<table><thead><tr><th>TICKET</th><th>STATUS</th><th>SOURCE</th></tr></thead><tbody>${rows.map(t=>`<tr><td><button data-ticket="${esc(t.id)}">${esc(t.id)}</button><p>${esc(t.title)}</p></td><td>${badge(t.status)}</td><td>roadmap.md:${t.line}</td></tr>`).join('')}</tbody></table>`:empty('No tickets match these filters.'));
   if(ticketDetail)html+=panel(ticketDetail.id,`<p>${esc(ticketDetail.status)} · ${esc(ticketDetail.source)}:${ticketDetail.line}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto">${esc(ticketDetail.text||ticketDetail.error)}</pre>`);
+  // T4-FG rule 7: the path of a carry-through for this ticket -- why it was selected, which run, the evidence on that
+  // run's final tree, the outcome -- and every decision recorded against the ticket, with its reviews. Shown as written.
+  if(ticketDetail&&(ticketDetail.carry||[]).length)html+=panel(ticketDetail.id+' — carry-through',ticketDetail.carry.map(a=>{const s=a.selection||{},e=a.evidence||{},p=e.patch||{},c=e.check||{},su=x=>x?`${x.cases} cases, ${x.fail} failing, ${x.skipped} skipped (exit ${x.exit})`:'not run';return `<h3>Attempt ${esc(a.attempt)}</h3>
+<p><b>Selected</b> by decision ${esc(s.decision)} at commit <code>${esc((s.pinned||'').slice(0,8))}</code>: ${esc(s.reason)}</p>
+<p><b>Passed over:</b> ${(s.passed_over||[]).map(x=>`${esc(x.ticket)} — ${esc(x.reason)}`).join('; ')||'—'}</p>
+<p><b>Stated check</b> (${esc((s.acceptance_check||{}).instrument)}): ${esc((s.acceptance_check||{}).what)} — on ${esc((s.acceptance_check||{}).tree)}</p>
+<p><b>Files named:</b> ${(s.files||[]).map(f=>`<code>${esc(f)}</code>`).join(', ')||'—'}</p>
+<p><b>Run:</b> ${esc(a.run)} (case ${esc(a.case)}) — terminal ${esc(e.run_terminal)}, its yardstick on the final tree ${esc(e.run_yardstick_final_tree)}</p>
+<p><b>Graded:</b> ${esc(e.graded_tree)}</p>
+<p><b>Patch:</b> ${(p.modified||[]).length} modified, ${(p.added||[]).length} added, ${(p.removed||[]).length} removed — applies to the pinned commit: ${esc(p.applies_to_pinned)} — <code>${esc(p.path)}</code></p>
+<p><b>Full suite</b> at the pinned commit: ${su(e.suite_pinned)}; with the patch: ${su(e.suite_patched)}; regressions: ${(e.regressions||[]).length}</p>
+<p><b>Check:</b> ${esc(c.passed)} of ${esc(c.cases)} added case(s) pass ${(c.test_classes_added||[]).length?'('+c.test_classes_added.map(esc).join(', ')+')':''}</p>
+${e.error?`<p><b>Not evidence:</b> ${esc(e.error)}</p>`:''}<p><b>Outcome:</b> ${esc(a.outcome)}</p>`}).join('<hr>'));
+  if(ticketDetail&&(ticketDetail.decisions||[]).length)html+=panel(ticketDetail.id+' — decisions recorded against it',ticketDetail.decisions.map(d=>{const x=d.entry||{};return `<p><b>${esc(x.id)}</b> ${esc(x.kind)} · ${esc((x.at||'').slice(0,19))} · ${esc(x.decision)}${x.follows?` · follows ${esc(x.follows)}`:''}</p><p>${esc(x.why)}</p>${(d.reviews||[]).map(r=>`<p>↳ review: ${esc(r.assessment)} by ${esc(r.reviewer)} — ${esc(r.reason)}</p>`).join('')}`}).join('<hr>'));
  }
  const meta=data('meta'),repo=meta?.git?.data,dev=data('development');
  const docs=meta?.documents||[];

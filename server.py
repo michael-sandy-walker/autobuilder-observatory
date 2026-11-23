@@ -59,6 +59,51 @@ def decisions_data(root=None):
         return {'ok': False, 'error': str(error)}
 
 
+CARRY_ROOT = Path.home() / '.autobuilder' / 'carry-through'
+
+
+def _json(path):
+    try:
+        return json.loads(path.read_text(errors='replace'))
+    except (OSError, ValueError):
+        return None
+
+
+def carry_attempts(ticket_id, root=None):
+    """T4-FG rule 7: every carry-through attempt for this ticket -- why it was selected (selection.json: the decision,
+    the reason, what was passed over, the stated check, the pinned commit), which run attempted it (run.txt), the
+    evidence taken on that run's final tree (evidence.json) and the outcome Autobuilder recorded. Read as written;
+    nothing is judged here."""
+    out = []
+    base = Path(root) if root else CARRY_ROOT
+    if not base.is_dir():
+        return out
+    for d in sorted(base.iterdir(), reverse=True):
+        sel = _json(d / 'selection.json') if d.is_dir() else None
+        if not sel or sel.get('ticket') != ticket_id:
+            continue
+        ev = _json(d / 'evidence.json') or {}
+        run = (d / 'run.txt').read_text().strip() if (d / 'run.txt').is_file() else None
+        outcome = (d / 'conclude.out').read_text(errors='replace').strip() if (d / 'conclude.out').is_file() else None
+        out.append({'attempt': d.name, 'dir': str(d), 'selection': sel, 'run': run, 'case':
+                    (d / 'case.txt').read_text().strip() if (d / 'case.txt').is_file() else None,
+                    'evidence': {k: ev.get(k) for k in ('graded_tree', 'run_terminal', 'run_yardstick_final_tree',
+                                                        'patch', 'suite_pinned', 'suite_patched', 'regressions',
+                                                        'check', 'error', 'dry_run') if k in ev},
+                    'outcome': outcome})
+    return out
+
+
+def ticket_decisions(ticket_id, root=None):
+    """The decisions Autobuilder recorded that concern this ticket, oldest first, with their reviews."""
+    try:
+        rows = [{'project': d['project'], 'entry': d['entry'], 'reviews': d['reviews']} for d in reviews.load(root)
+                if ticket_id in (d['entry'].get('tickets') or [])]
+    except (OSError, ValueError, SystemExit):
+        return []
+    return sorted(rows, key=lambda d: d['entry'].get('at', ''))
+
+
 def development_data(path=None, ticket_id=None):
     """Read the authoritative queue with the repository's existing marker semantics."""
     path = Path(path) if path else ROOT / '.claude-memory/roadmap.md'
@@ -71,7 +116,8 @@ def development_data(path=None, ticket_id=None):
             lines = path.read_text(errors='replace').splitlines()
             return {'ok': True, 'data': {**ticket, 'status': queue.MARKER_NAMES[ticket['marker']],
                     'source': '.claude-memory/roadmap.md',
-                    'text': '\n'.join(lines[ticket['line'] - 1:ticket['line']] + ticket['body'])}}
+                    'text': '\n'.join(lines[ticket['line'] - 1:ticket['line']] + ticket['body']),
+                    'decisions': ticket_decisions(ticket_id), 'carry': carry_attempts(ticket_id)}}
         rows = [{k: t[k] for k in ('id', 'marker', 'title', 'line')} |
                 {'status': queue.MARKER_NAMES[t['marker']], 'tier': queue.tier_of(t['id'])}
                 for t in tickets]
