@@ -138,3 +138,45 @@ class RecommendationTest(unittest.TestCase):
             got = recommendations(root)
         self.assertEqual(got[('a#1', 'p')]['reason'], 'second thoughts')
         self.assertEqual(len(got), 1)
+
+
+class FindingRequestTest(unittest.TestCase):
+    """T4-FJ: the operator hands Autobuilder a finding; one at a time; the request and its progress are visible."""
+
+    def test_a_finding_is_started_recorded_and_listed_and_a_second_waits(self):
+        import json, os, tempfile
+        from pathlib import Path
+        from server import start_finding, finding_jobs
+        started = []
+        def launch(cmd, d):
+            started.append(cmd)
+            (Path(d) / 'out.log').write_text('')
+            return os.getpid()   # alive: the request counts as running
+        with tempfile.TemporaryDirectory() as root:
+            ok = start_finding(json.dumps({'text': 'the planner adds subgoals under a finished goal',
+                                           'about': '2026-11-23_15-51-06#1', 'project': 'no-such-project'}).encode(),
+                               root=root, launch=launch)
+            self.assertTrue(ok['ok'])
+            self.assertIn('--finding', started[0])
+            self.assertEqual(started[0][started[0].index('--about') + 1], '2026-11-23_15-51-06#1')
+            launcher = started[0].index('org.springframework.boot.loader.launch.PropertiesLauncher')
+            self.assertEqual(started[0][launcher + 1], '-', 'a project that is not on disk: no project')
+            jobs = finding_jobs(root)
+            self.assertEqual([j['state'] for j in jobs], ['running'])
+            self.assertEqual(jobs[0]['text'], 'the planner adds subgoals under a finished goal')
+            busy = start_finding(json.dumps({'text': 'another'}).encode(), root=root, launch=launch)
+            self.assertFalse(busy['ok'])
+            self.assertIn('one at a time', busy['error'])
+
+    def test_an_empty_finding_is_refused_and_a_finished_job_shows_autobuilders_answer(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import start_finding, finding_jobs
+        with tempfile.TemporaryDirectory() as root:
+            self.assertFalse(start_finding(json.dumps({'text': '  '}).encode(), root=root, launch=lambda c, d: 1)['ok'])
+            d = Path(root, '2026-11-23_17-00-00'); d.mkdir()
+            (d / 'request.json').write_text(json.dumps({'text': 'x'}))
+            (d / 'out.log').write_text('noise\nPROPOSE: finding TICKET_CREATED T1-ZZ#1 -- created T1-ZZ\n')
+            (d / 'pid').write_text('999999999')
+            self.assertEqual(finding_jobs(root)[0]['state'], 'done')
+            self.assertEqual(finding_jobs(root)[0]['answer'], 'TICKET_CREATED T1-ZZ#1 -- created T1-ZZ')

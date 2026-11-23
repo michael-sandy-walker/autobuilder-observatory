@@ -2,6 +2,7 @@
 one of Autobuilder's decisions (POST /api/reviews)."""
 from meta import collect, document
 import argparse
+import os
 import json
 import importlib.util
 from collections import Counter
@@ -163,6 +164,90 @@ def append_review(body, root=None):
         return {'ok': False, 'error': str(error)}
 
 
+FINDINGS_ROOT = Path.home() / '.autobuilder' / 'findings'
+JAR = ROOT / 'target' / 'autobuilder-1.0.1-SNAPSHOT.jar'
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except (OSError, ValueError):
+        return False
+
+
+def finding_jobs(root=None, limit=5):
+    """T4-FJ: the operator's recent requests to Autobuilder, newest first: what was asked, about what, and how far it
+    got -- running, done (with Autobuilder's own one-line answer), or failed."""
+    base = Path(root) if root else FINDINGS_ROOT
+    out = []
+    if not base.is_dir():
+        return out
+    for d in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True)[:limit]:
+        req = _json(d / 'request.json') or {}
+        log = (d / 'out.log').read_text(errors='replace') if (d / 'out.log').is_file() else ''
+        answer = next((l for l in log.splitlines() if l.startswith('PROPOSE: finding')), None)
+        pid = int((d / 'pid').read_text().strip()) if (d / 'pid').is_file() else 0
+        state = 'done' if answer else 'running' if pid and _alive(pid) else 'failed'
+        out.append({'stamp': d.name, 'text': req.get('text', ''), 'about': req.get('about'),
+                    'project': req.get('project'), 'state': state,
+                    'answer': answer[len('PROPOSE: finding '):] if answer else None,
+                    'error': None if answer or state == 'running' else (log.strip().splitlines() or ['no output'])[-1][:300]})
+    return out
+
+
+def run_is_live(port=8081):
+    try:
+        with urlopen(f'http://127.0.0.1:{port}/autobuilder/status', timeout=1):
+            return True
+    except (HTTPError, URLError, TimeoutError, OSError):
+        return False
+
+
+def start_finding(body, root=None, jar=None, launch=None):
+    """T4-FJ: the Observatory's second write -- hands Autobuilder the operator's finding and starts its investigation
+    in the background (ProposeCommand --finding). One request at a time, never while a run is live; the decision it
+    leads to is recorded by Autobuilder like any other. LAUNCH (for tests) replaces starting the process."""
+    try:
+        value = json.loads(body or b'{}')
+    except ValueError:
+        return {'ok': False, 'error': 'not JSON'}
+    text = str(value.get('text') or '').strip()
+    if not text:
+        return {'ok': False, 'error': 'write the finding first'}
+    base = Path(root) if root else FINDINGS_ROOT
+    if any(j['state'] == 'running' for j in finding_jobs(base)):
+        return {'ok': False, 'error': 'Autobuilder is still looking into the previous request; one at a time'}
+    if launch is None and run_is_live():
+        return {'ok': False, 'error': 'a run is live; ask again when it has ended'}
+    about = str(value.get('about') or '').strip() or None
+    project_name = str(value.get('project') or '').strip() or None
+    project = None
+    if project_name and '(archive ' not in project_name and project_name != 'autobuilder-roadmap':
+        candidate = ROOT / 'data' / project_name
+        if candidate.is_dir():
+            project = candidate
+    from datetime import datetime
+    d = base / datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'request.json').write_text(json.dumps({'text': text, 'about': about, 'project': project_name}, indent=2))
+    (d / 'finding.txt').write_text(text + '\n')
+    cmd = ['java', f'-Dautobuilder.log.root={d / "logs"}',
+           '-Dloader.main=com.walpro.autobuilder.core.propose.ProposeCommand', '-cp', str(jar or JAR),
+           'org.springframework.boot.loader.launch.PropertiesLauncher', str(project) if project else '-',
+           '--finding', str(d / 'finding.txt')] + (['--about', about] if about else []) + [
+           '--spring.profiles.active=dev-auto,fast', f'--autobuilder.propose.roadmap={ROOT / ".claude-memory" / "roadmap.md"}']
+    if launch is not None:
+        pid = launch(cmd, d)
+    else:
+        import subprocess
+        with open(d / 'out.log', 'w') as out:
+            pid = subprocess.Popen(cmd, cwd=str(ROOT), stdout=out, stderr=subprocess.STDOUT,
+                                   start_new_session=True).pid
+    (d / 'pid').write_text(str(pid))
+    return {'ok': True, 'data': {'stamp': d.name, 'project': str(project) if project else None, 'about': about}}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         # The page's own files change as the Observatory is developed; without this a browser keeps running a cached
@@ -180,11 +265,12 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path != '/api/reviews':
+        if self.path not in ('/api/reviews', '/api/findings'):
             self.send_error(404)
             return
         length = int(self.headers.get('Content-Length') or 0)
-        value = append_review(self.rfile.read(min(length, 64 * 1024)))
+        body = self.rfile.read(min(length, 64 * 1024))
+        value = append_review(body) if self.path == '/api/reviews' else start_finding(body)
         self.send_json(value, 200 if value['ok'] else 400)
 
     def do_GET(self):
@@ -203,6 +289,7 @@ class Handler(SimpleHTTPRequestHandler):
                 result = {key: job.result() for key, job in jobs.items()}
             result['development'] = development_data()
             result['decisions'] = decisions_data()
+            result['findings'] = {'ok': True, 'data': finding_jobs()}
             result['meta'] = {'ok': True, 'data': collect()}
             self.send_json(result)
         elif self.path.startswith('/api/'):
