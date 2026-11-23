@@ -192,7 +192,7 @@ def finding_jobs(root=None, limit=5):
         out.append({'stamp': d.name, 'text': req.get('text', ''), 'about': req.get('about'),
                     'project': req.get('project'), 'state': state,
                     'answer': answer[len('PROPOSE: finding '):] if answer else None,
-                    'error': None if answer or state == 'running' else (log.strip().splitlines() or ['no output'])[-1][:300]})
+                    'error': None if answer or state == 'running' else (log.strip().splitlines() or ['no output'])[-1]})
     return out
 
 
