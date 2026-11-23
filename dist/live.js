@@ -167,7 +167,11 @@ ${r?`<div class="row" style="border-left:3px solid currentColor;padding-left:8px
  }
 
 }
-async function refresh(){if(busy)return;busy=true;$('#refresh').disabled=true;try{const r=await fetch('/api/snapshot',{cache:'no-store',signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error(`HTTP ${r.status}`);snapshot=await r.json();updated=new Date()}catch(e){snapshot={status:{ok:false,error:`Cannot reach Observatory proxy: ${e.message}`}};updated=new Date()}finally{busy=false;$('#refresh').disabled=false;render()}}
-$('#refresh').onclick=refresh;
+// A refresh whose data is exactly what the page already shows leaves the page alone -- opened sections, scroll
+// positions and a text selection are untouched; only the 'last checked' time moves. The page is rebuilt only when
+// something changed (then opened sections and scroll positions are restored, and a selection pauses the timer).
+let shownSnapshot=null;
+async function refresh(force){if(busy)return;busy=true;$('#refresh').disabled=true;let text;try{const r=await fetch('/api/snapshot',{cache:'no-store',signal:AbortSignal.timeout(8000)});if(!r.ok)throw Error(`HTTP ${r.status}`);text=await r.text();snapshot=JSON.parse(text);updated=new Date()}catch(e){snapshot={status:{ok:false,error:`Cannot reach Observatory proxy: ${e.message}`}};text=JSON.stringify(snapshot);updated=new Date()}finally{busy=false;$('#refresh').disabled=false;if(!force&&text===shownSnapshot){const u=$('#updated');if(u)u.textContent=`Last checked ${updated.toLocaleTimeString()}`}else{shownSnapshot=text;render()}}}
+$('#refresh').onclick=()=>refresh(true);
 $('#export').onclick=()=>{const a=document.createElement('a'),url=URL.createObjectURL(new Blob([JSON.stringify({checkedAt:updated,sources:snapshot},null,2)],{type:'application/json'}));a.href=url;a.download='autobuilder-live-snapshot.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)};
 window.onhashchange=render;render();refresh();setInterval(()=>{if(!document.activeElement?.closest?.('form')&&!String(window.getSelection?.()||''))refresh()},5000);
