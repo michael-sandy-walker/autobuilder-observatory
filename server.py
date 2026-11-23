@@ -164,6 +164,12 @@ def append_review(body, root=None):
 
 
 class Handler(SimpleHTTPRequestHandler):
+    def end_headers(self):
+        # The page's own files change as the Observatory is developed; without this a browser keeps running a cached
+        # live.js after an update (2026-11-23: the review walkthrough was served but not shown).
+        self.send_header('Cache-Control', 'no-cache')
+        super().end_headers()
+
     def send_json(self, value, status=200):
         body = json.dumps(value).encode()
         self.send_response(status)
