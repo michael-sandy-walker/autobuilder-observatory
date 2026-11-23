@@ -1,7 +1,7 @@
 const $=s=>document.querySelector(s);
 const esc=s=>String(s??'—').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const views=[['overview','◫','Overview'],['roadmap','⌁','Roadmap'],['tickets','▤','Tickets'],['agents','⬡','Agent roles'],['changes','↗','Changes'],['merges','⑂','Merge workbench'],['history','◷','Decision history'],['decisions','⚖','Own decisions'],['evaluations','✓','Evaluations'],['signals','≋','Signals'],['runtime','↻','Target run']];
-const openDetails=new Set();let snapshot={},updated=null,busy=false,ticketSearch='',ticketStatus='Live work',ticketTier='All tiers',ticketDetail=null,documentDetail=null,walkAt=0,walkNote='',askAbout=null,askNote='';
+const openDetails=new Set();let snapshot={},updated=null,busy=false,ticketSearch='',ticketStatus='Live work',ticketTier='All tiers',ticketBy='Filed by anyone',ticketDetail=null,documentDetail=null,walkAt=0,walkNote='',askAbout=null,askNote='';
 const data=k=>snapshot[k]?.ok?snapshot[k].data:null;
 const panel=(title,body)=>`<section class="panel"><div class="panel-head"><h2>${esc(title)}</h2></div><div class="pad">${body}</div></section>`;
 const empty=t=>`<p>${esc(t)}</p>`;
@@ -57,9 +57,9 @@ function render(){
  if(view==='tickets'){
   const dev=data('development'),statuses=['Live work','All statuses',...Object.keys(dev?.counts||{})];
   const select=(id,values,value)=>`<select id="${id}" aria-label="${id}">${values.map(x=>`<option ${x===value?'selected':''}>${esc(x)}</option>`).join('')}</select>`;
-  html=`<div class="toolbar"><input id="ticket-search" aria-label="Search development tickets" placeholder="Search ID or title…" value="${esc(ticketSearch)}">${select('ticket-status',statuses,ticketStatus)}${select('ticket-tier',['All tiers',...[...new Set((dev?.tickets||[]).map(t=>t.tier))]],ticketTier)}</div>`;
-  const rows=(dev?.tickets||[]).filter(t=>(ticketStatus==='All statuses'||(ticketStatus==='Live work'?['open','in progress'].includes(t.status):t.status===ticketStatus))&&(ticketTier==='All tiers'||t.tier===ticketTier)&&`${t.id} ${t.title}`.toLowerCase().includes(ticketSearch.toLowerCase()));
-  html+=panel(`${rows.length} matching development tickets`,rows.length?`<table><thead><tr><th>TICKET</th><th>STATUS</th><th>SOURCE</th></tr></thead><tbody>${rows.map(t=>`<tr><td><button data-ticket="${esc(t.id)}">${esc(t.id)}</button><p>${esc(t.title)}</p></td><td>${badge(t.status)}</td><td>roadmap.md:${t.line}</td></tr>`).join('')}</tbody></table>`:empty('No tickets match these filters.'));
+  html=`<div class="toolbar"><input id="ticket-search" aria-label="Search development tickets" placeholder="Search ID or title…" value="${esc(ticketSearch)}">${select('ticket-status',statuses,ticketStatus)}${select('ticket-tier',['All tiers',...[...new Set((dev?.tickets||[]).map(t=>t.tier))]],ticketTier)}${select('ticket-by',['Filed by anyone','Filed by Autobuilder','Filed by Autobuilder from your finding'],ticketBy)}</div>`;
+  const rows=(dev?.tickets||[]).filter(t=>(ticketStatus==='All statuses'||(ticketStatus==='Live work'?['open','in progress'].includes(t.status):t.status===ticketStatus))&&(ticketTier==='All tiers'||t.tier===ticketTier)&&(ticketBy==='Filed by anyone'||(ticketBy==='Filed by Autobuilder'?!!t.filedBy:t.filedBy==='your finding'))&&`${t.id} ${t.title}`.toLowerCase().includes(ticketSearch.toLowerCase()));
+  html+=panel(`${rows.length} matching development tickets`,rows.length?`<table><thead><tr><th>TICKET</th><th>STATUS</th><th>SOURCE</th></tr></thead><tbody>${rows.map(t=>`<tr><td><button data-ticket="${esc(t.id)}">${esc(t.id)}</button>${t.filedBy?' '+badge(t.filedBy==='your finding'?'by Autobuilder, from your finding':'by Autobuilder'):''}<p>${esc(t.title)}</p></td><td>${badge(t.status)}</td><td>roadmap.md:${t.line}</td></tr>`).join('')}</tbody></table>`:empty('No tickets match these filters.'));
   if(ticketDetail)html+=panel(ticketDetail.id,`<p>${esc(ticketDetail.status)} · ${esc(ticketDetail.source)}:${ticketDetail.line}</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto">${esc(ticketDetail.text||ticketDetail.error)}</pre>`);
   // T4-FG rule 7: the path of a carry-through for this ticket -- why it was selected, which run, the evidence on that
   // run's final tree, the outcome -- and every decision recorded against the ticket, with its reviews. Shown as written.
@@ -172,6 +172,7 @@ ${r?`<div class="row" style="border-left:3px solid currentColor;padding-left:8px
   $('#ticket-search').oninput=e=>{const cursor=e.target.selectionStart;ticketSearch=e.target.value;render();$('#ticket-search').focus();$('#ticket-search').setSelectionRange(cursor,cursor)};
   $('#ticket-status').onchange=e=>{ticketStatus=e.target.value;render()};
   $('#ticket-tier').onchange=e=>{ticketTier=e.target.value;render()};
+  $('#ticket-by').onchange=e=>{ticketBy=e.target.value;render()};
  }
 
 }

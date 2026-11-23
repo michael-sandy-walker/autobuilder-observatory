@@ -180,3 +180,21 @@ class FindingRequestTest(unittest.TestCase):
             (d / 'pid').write_text('999999999')
             self.assertEqual(finding_jobs(root)[0]['state'], 'done')
             self.assertEqual(finding_jobs(root)[0]['answer'], 'TICKET_CREATED T1-ZZ#1 -- created T1-ZZ')
+
+
+class FiledByAutobuilderTest(unittest.TestCase):
+    """The Tickets view marks the tickets Autobuilder created itself, and those it filed from the operator's finding."""
+
+    def test_created_tickets_are_marked_by_where_they_came_from(self):
+        import json, os, tempfile
+        from server import filed_by_autobuilder
+        with tempfile.TemporaryDirectory() as root:
+            os.makedirs(os.path.join(root, '.claude-memory'))
+            os.makedirs(os.path.join(root, 'data', 'p', 'meta'))
+            with open(os.path.join(root, 'data', 'p', 'meta', 'decisions.ndjson'), 'w') as f:
+                f.write(json.dumps({'id': 'run#1', 'at': '1', 'kind': 'OPERATOR_FINDING'}) + '\n')
+            with open(os.path.join(root, '.claude-memory', 'decisions.ndjson'), 'w') as f:
+                f.write(json.dumps({'id': 'T1-AA#1', 'at': '2', 'kind': 'TICKET_CREATED', 'tickets': ['T1-AA'], 'follows': 'x#1'}) + '\n')
+                f.write(json.dumps({'id': 'T4-BB#1', 'at': '3', 'kind': 'TICKET_CREATED', 'tickets': ['T4-BB'], 'follows': 'run#1'}) + '\n')
+                f.write(json.dumps({'id': 'T1-AA#2', 'at': '4', 'kind': 'TICKET_CHANGED', 'tickets': ['T1-CC']}) + '\n')
+            self.assertEqual(filed_by_autobuilder(root), {'T1-AA': 'autobuilder', 'T4-BB': 'your finding'})

@@ -126,6 +126,22 @@ def ticket_decisions(ticket_id, root=None):
     return sorted(rows, key=lambda d: d['entry'].get('at', ''))
 
 
+def filed_by_autobuilder(root=None):
+    """The tickets Autobuilder created itself, by id, from its decision records: 'autobuilder' for one it filed from its
+    own draft, 'your finding' for one it filed from a finding the operator handed it (T4-FJ)."""
+    try:
+        rows = reviews.load(root)
+    except (OSError, ValueError, SystemExit):
+        return {}
+    kinds = {d['entry'].get('id'): d['entry'].get('kind') for d in rows}
+    out = {}
+    for d in rows:
+        e = d['entry']
+        if e.get('kind') == 'TICKET_CREATED' and e.get('tickets'):
+            out[e['tickets'][0]] = 'your finding' if kinds.get(e.get('follows')) == 'OPERATOR_FINDING' else 'autobuilder'
+    return out
+
+
 def development_data(path=None, ticket_id=None):
     """Read the authoritative queue with the repository's existing marker semantics."""
     path = Path(path) if path else ROOT / '.claude-memory/roadmap.md'
@@ -140,8 +156,9 @@ def development_data(path=None, ticket_id=None):
                     'source': '.claude-memory/roadmap.md',
                     'text': '\n'.join(lines[ticket['line'] - 1:ticket['line']] + ticket['body']),
                     'decisions': ticket_decisions(ticket_id), 'carry': carry_attempts(ticket_id)}}
+        by = filed_by_autobuilder()
         rows = [{k: t[k] for k in ('id', 'marker', 'title', 'line')} |
-                {'status': queue.MARKER_NAMES[t['marker']], 'tier': queue.tier_of(t['id'])}
+                {'status': queue.MARKER_NAMES[t['marker']], 'tier': queue.tier_of(t['id']), 'filedBy': by.get(t['id'])}
                 for t in tickets]
         return {'ok': True, 'data': {'source': '.claude-memory/roadmap.md',
                 'tickets': rows, 'counts': dict(Counter(t['status'] for t in rows))}}
