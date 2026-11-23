@@ -44,12 +44,33 @@ reviews = importlib.util.module_from_spec(review_spec)
 review_spec.loader.exec_module(reviews)
 
 
+def recommendations(root=None):
+    """M-H: a Claude session's recommendation per open decision, written after reading its evidence
+    (process/reviews/recommendations.ndjson; the latest line for a decision wins). Shown beside the decision so the
+    operator can confirm or correct it; a recommendation is never a review until the operator acts on it."""
+    path = Path(root or ROOT) / 'process' / 'reviews' / 'recommendations.ndjson'
+    out = {}
+    if not path.is_file():
+        return out
+    for line in path.read_text(errors='replace').splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(r, dict) and r.get('decision'):
+            out[(r['decision'], r.get('project'))] = r
+    return out
+
+
 def decisions_data(root=None):
     """T4-FB: every project's record of the decisions Autobuilder took on its own, with the reviews appended beside
     them (M-H); unreviewed first, then newest first. Read only -- reviews are written by scripts/review_decisions.py."""
     try:
+        recs = recommendations(root)
         rows = [{'project': d['project'], 'entry': d['entry'], 'reviews': d['reviews'],
-                 'needs_review': d.get('needs_review', True)} for d in reviews.load(root)]
+                 'needs_review': d.get('needs_review', True),
+                 'recommendation': recs.get((d['entry'].get('id'), d['project'])) or recs.get((d['entry'].get('id'), None))}
+                for d in reviews.load(root)]
         waiting = lambda d: d['needs_review'] and not d['reviews']
         rows.sort(key=lambda d: d['entry'].get('at', ''), reverse=True)
         rows.sort(key=lambda d: not waiting(d))

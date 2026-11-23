@@ -120,3 +120,21 @@ class CarryAttemptTest(unittest.TestCase):
     def test_no_attempts_directory_is_empty(self):
         from server import carry_attempts
         self.assertEqual(carry_attempts('T1-AA', root='/nonexistent/carry'), [])
+
+
+class RecommendationTest(unittest.TestCase):
+    """M-H: a session's recommendation is shown beside its decision; the latest line wins; it is not a review."""
+
+    def test_latest_recommendation_per_decision_and_project(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import recommendations
+        with tempfile.TemporaryDirectory() as root:
+            d = Path(root, 'process', 'reviews'); d.mkdir(parents=True)
+            (d / 'recommendations.ndjson').write_text('\n'.join(json.dumps(x) for x in [
+                {'decision': 'a#1', 'project': 'p', 'assessment': 'AGREE', 'reason': 'first'},
+                {'decision': 'a#1', 'project': 'p', 'assessment': 'DISAGREE', 'reason': 'second thoughts'},
+                'not an object']) + '\nnot json\n')
+            got = recommendations(root)
+        self.assertEqual(got[('a#1', 'p')]['reason'], 'second thoughts')
+        self.assertEqual(len(got), 1)
