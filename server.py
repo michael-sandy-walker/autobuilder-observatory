@@ -155,7 +155,7 @@ def append_review(body, root=None):
         value = json.loads(body or b'{}')
         rec = reviews.review(str(value.get('decision', '')), str(value.get('assessment', '')).upper(),
                              str(value.get('reason', '')), str(value.get('reviewer') or 'operator'), root=root,
-                             project=value.get('project') or None)
+                             project=value.get('project') or None, revises=value.get('revises') or None)
         return {'ok': True, 'data': rec}
     except SystemExit as refused:
         return {'ok': False, 'error': str(refused)}
