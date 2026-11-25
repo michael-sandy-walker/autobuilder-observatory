@@ -538,6 +538,8 @@ class Handler(SimpleHTTPRequestHandler):
                 loaded, roadmap_tickets = None, None
             result['follows'] = {'ok': True, 'data': {'jobs': follow_jobs(loaded=loaded, roadmap_tickets=roadmap_tickets),
                                                       'queued': follow_queue()}}
+            hb = nudge_script.watcher()
+            result['nudgeWatch'] = {'ok': True, 'data': {'watching': bool(hb), 'since': hb and hb.get('at')}}
             result['nudges'] = {'ok': True, 'data': nudges()}
             result['meta'] = {'ok': True, 'data': collect()}
             self.send_json(result)

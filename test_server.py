@@ -391,6 +391,7 @@ class PageDrawsTest(unittest.TestCase):
             snap = {'decisions': decisions_data(root), 'development': development_data(own / 'roadmap.md'),
                     'findings': {'ok': True, 'data': []},
                     'follows': {'ok': True, 'data': {'jobs': [], 'queued': ['autobuilder-roadmap']}},
+                    'nudgeWatch': {'ok': True, 'data': {'watching': True, 'since': 1}},
                     'nudges': {'ok': True, 'data': [{'decision': 'T4-AA#3', 'project': 'autobuilder-roadmap',
                                                      'at': '2026-11-25T19:01:00+00:00', 'answered': False}]},
                     'meta': {'ok': False, 'error': 'not read in this test'}}
@@ -401,3 +402,37 @@ class PageDrawsTest(unittest.TestCase):
                                  capture_output=True, text=True, timeout=60)
         self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
         self.assertNotIn('ERROR', out.stdout)
+
+
+class NudgeWatchTest(unittest.TestCase):
+    """M-H: one watcher reports at a time; a heartbeat older than FRESH or of a dead process means nobody is watching;
+    the SessionStart hook lists the waiting nudges and says to start the watch."""
+
+    def test_one_watcher_at_a_time_and_a_stale_or_dead_one_is_taken_over(self):
+        import os, tempfile, time
+        from server import nudge_script as ns
+        with tempfile.TemporaryDirectory() as root:
+            hb = os.path.join(root, 'w.json')
+            now = time.time()
+            self.assertIsNone(ns.watcher(hb, now))
+            self.assertTrue(ns.beat(hb, pid=os.getpid(), now=now))
+            self.assertEqual(ns.watcher(hb, now)['pid'], os.getpid())
+            self.assertFalse(ns.beat(hb, pid=os.getppid(), now=now + 5), 'a second watcher waits while the first beats')
+            self.assertTrue(ns.beat(hb, pid=os.getppid(), now=now + ns.FRESH + 1), 'a stale heartbeat is taken over')
+            with open(hb, 'w') as f:
+                f.write('{"pid": 999999999, "at": %f}' % now)
+            self.assertIsNone(ns.watcher(hb, now), 'a dead process is not watching')
+
+    def test_the_session_start_hook_lists_waiting_nudges_and_says_to_watch(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import nudge_script as ns
+        with tempfile.TemporaryDirectory() as root:
+            d = Path(root, 'process', 'reviews'); d.mkdir(parents=True)
+            (d / 'nudges.ndjson').write_text(json.dumps({'decision': 'T1-AA#1', 'project': 'autobuilder-roadmap',
+                                                         'at': '2026-11-25T19:00:00+00:00', 'note': 'look at this'}) + '\n')
+            ctx = ns.session_start(root)['hookSpecificOutput']
+        self.assertEqual(ctx['hookEventName'], 'SessionStart')
+        self.assertIn('NUDGE T1-AA#1 in autobuilder-roadmap', ctx['additionalContext'])
+        self.assertIn('the operator\'s note: "look at this"', ctx['additionalContext'])
+        self.assertIn('python3 scripts/nudges.py --wait', ctx['additionalContext'])

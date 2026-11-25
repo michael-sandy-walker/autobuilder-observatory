@@ -48,8 +48,9 @@ written from a terminal with `scripts/review_decisions.py` (followed then at the
 
 A topic with no recommendation can be handed to a Claude session (M-H part 2): "Ask a Claude session to recommend"
 appends the decision's id, its record and an optional note in your words to `process/reviews/nudges.ndjson`. A running
-session watches that file (`scripts/nudges.py --watch`); with none running, the next session reads what is waiting at
-its start. The session only writes a recommendation, which then appears beside the topic for you to confirm.
+session watches that file (`scripts/nudges.py --wait`, started at each session's start by the project's SessionStart
+hook); with none running, the next session reads what is waiting at its start. Beside the buttons the page says whether
+a session is watching right now (the watcher's heartbeat, `~/.autobuilder/nudge-watch.json`). The session only writes a recommendation, which then appears beside the topic for you to confirm.
 
 Export downloads the latest live snapshot. The original example implementation
 is preserved in `dist/app.js` but is no longer loaded. Browser records from the
