@@ -32,13 +32,19 @@ text and line number. These views work without the evolution backend. Ticket
 status follows the authoritative marker, preserving distinct closure kinds. Recent run events provide changes, agent activity, decisions,
 evaluations, and signal evidence. These views cover the backend's recent event
 window, not its full persisted history. Import conflicts show receiving and imported
-values. Decisions and model consultations use existing Autobuilder controls;
-this local monitor does not mutate projects or initiate LLM calls.
+values. Decisions and model consultations use existing Autobuilder controls.
+The views of a run never change a project. Its writes are three, all in Own decisions: a review appended beside a
+decision (then carried out by Autobuilder, below), a finding handed to Autobuilder (which investigates it with its
+model), and a nudge asking a Claude session for a recommendation.
 
 Own decisions lists the decisions Autobuilder took on its own: the drafts it checked after each run (each
 project's `meta/decisions.ndjson`) and what it did to its roadmap (`.claude-memory/decisions.ndjson`: tickets
-created, changed, retracted), unreviewed first. Each entry has a review form; it is the Observatory's one write and
-only APPENDS a review (AGREE / DISAGREE / QUESTION with a reason) beside the entry, in `decision-reviews.ndjson`.
+created, changed, retracted). Open topics are walked one at a time, oldest first, each with a Claude session's
+recommendation when one exists; the reviewed ones form the history, each opening to the decision in full (about,
+decided, why, what it read, the recommendation) and, for an entry that carries out a review, the decision it carried
+out. A decision is named by what Autobuilder did and its reference, its id and local time (`T1-GX#14,
+2026-11-25_12-49-58`). A review only APPENDS (AGREE / DISAGREE / QUESTION with a reason) beside the entry, in
+`decision-reviews.ndjson`.
 Autobuilder follows a review appended here at once (T6-X): the server starts `ProposeCommand <project> --follow-reviews`
 from the built jar (`-` for its own roadmap decisions), one at a time, never while a run is live or a finding is being
 looked into; a waiting one starts by itself once the way is clear, and the panel "Your reviews carried out on the roadmap"
