@@ -18,15 +18,16 @@ const topicTitle=e=>{const on=String(e.on||''),t=(e.tickets||[])[0]||'',m=on.mat
  if(e.kind==='TICKET_SELECTED')return `Autobuilder chose ${t||'no ticket'} to work on by itself (attempt ${att})`;
  if(e.kind==='TICKET_CLOSED')return `Autobuilder closed ${t} after working on it by itself (attempt ${att})`;
  const why=String(e.decision||'').replace(/^left open:\s*/,'');return `Autobuilder left ${t} open after working on it by itself (attempt ${att}): ${why}`};
-// A decision named for the operator: what Autobuilder did and when, in local time -- never the bare id ('T1-GX#14' is
-// Autobuilder's 14th decision on T1-GX, stable but meaningless without a lookup). The id follows, small, for a session.
-const whenLocal=at=>{const m=String(at||'').match(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d{1,3})?\d*(Z|[+-]\d\d:\d\d)?$/);if(!m)return '';const d=new Date(m[1]+(m[2]||'')+(m[3]||'Z'));return isNaN(d)?'':d.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})};
+// A decision named for the operator: what Autobuilder did, then its reference 'T1-GX#14, 2026-11-25-12-49-01' (id and
+// local time) -- the id alone is meaningless without a lookup; with the time anyone can find it by either part.
+const whenLocal=at=>{const m=String(at||'').match(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d{1,3})?\d*(Z|[+-]\d\d:\d\d)?$/);if(!m)return '';const d=new Date(m[1]+(m[2]||'')+(m[3]||'Z'));if(isNaN(d))return '';const p=n=>String(n).padStart(2,'0');return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}-${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}`};
 const decWhat=e=>{const t=(e.tickets||[])[0]||'',dz=String(e.decision||''),k=e.kind||'',on=String(e.on||'').split(/[:.(]/)[0].slice(0,80);
  if(k==='TICKET_CREATED')return `filed ${t}`;if(k==='TICKET_CLOSED')return `closed ${t}`;if(k==='TICKET_RETRACTED')return `retracted ${t}`;if(k==='TICKET_SELECTED')return `chose ${t} to work on by itself`;
  if(k==='TICKET_CHANGED')return /^appended the review.*'s disagree to/.test(dz)?`withdrew its note on ${t} (the review disagreed)`:/^appended the review.*'s question to/.test(dz)?`added the review's question to ${t}`:/^appended the review/.test(dz)?`noted the review's agreement on ${t}`:/^appended the run/.test(dz)?`added run evidence to ${t}`:/^left open/.test(dz)?`left ${t} open after working on it`:/withdr/i.test(dz)?`withdrew a note on ${t}`:/re-?open/i.test(dz)?`re-opened ${t}`:`changed ${t}`;
  if(k==='DRAFT_CHECKED')return `checked a draft from a run ("${on}")`;if(k==='DRAFT_INVESTIGATED')return `looked into a draft ("${on}")`;if(k==='OPERATOR_FINDING')return `took your finding ("${on}")`;return `${k.toLowerCase().replace(/_/g,' ')} ${t}`.trim()};
-const decText=e=>`Autobuilder ${decWhat(e)}${whenLocal(e.at)?', '+whenLocal(e.at):''}`;
-const decName=e=>`${esc(decText(e))} <small style="opacity:.7">(${esc(e.id)})</small>`;
+const decRef=e=>`${e.id}${whenLocal(e.at)?', '+whenLocal(e.at):''}`;
+const decText=e=>`Autobuilder ${decWhat(e)} · ${decRef(e)}`;
+const decName=e=>`${esc('Autobuilder '+decWhat(e))} · <span style="white-space:nowrap">${esc(decRef(e))}</span>`;
 const effectOf=(d,a)=>{const e=d.entry,c=e.checker||{},kept=/KEEP|CORRECT/.test(c.outcome||''),own=d.project==='autobuilder-roadmap';
  if(d.project.includes('(archive '))return 'recorded only; Autobuilder does not act on it (the project\'s state is gone)';
  if(a==='DISAGREE')return own?(e.kind==='TICKET_CREATED'?'Autobuilder retracts the ticket it created':e.kind==='TICKET_CHANGED'?'Autobuilder withdraws the note it appended':e.kind==='TICKET_CLOSED'?'Autobuilder re-opens the ticket it closed':'recorded; a session acts on it (M-H)'):e.kind==='DRAFT_INVESTIGATED'?'Autobuilder investigates the draft once more, with your reason':kept?'Autobuilder retracts what was made of the draft':'Autobuilder acts on the draft after all';
