@@ -1,5 +1,8 @@
 # Autobuilder Observatory (local)
 
+How to use it -- reviewing Autobuilder's own decisions, asking, following development and runs -- is described in
+the Autobuilder repository's `docs/observatory.md`. This README covers starting it and how it works.
+
 ## Access outside Codex
 
 Open [http://127.0.0.1:8090](http://127.0.0.1:8090) in any browser on this machine
