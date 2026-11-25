@@ -1,5 +1,6 @@
-"""Local Observatory host and bounded, read-only proxy for Autobuilder APIs. Its one write: a review appended beside
-one of Autobuilder's decisions (POST /api/reviews)."""
+"""Local Observatory host and bounded, read-only proxy for Autobuilder APIs. Its writes: a review appended beside one of
+Autobuilder's decisions (POST /api/reviews, then followed at once, T6-X), an operator's finding handed to Autobuilder
+(POST /api/findings, T4-FJ), and a request for a Claude session's recommendation (POST /api/nudges, M-H)."""
 from meta import collect, document
 import argparse
 import os
@@ -43,6 +44,9 @@ spec.loader.exec_module(queue)
 review_spec = importlib.util.spec_from_file_location('autobuilder_review_decisions', ROOT / 'scripts/review_decisions.py')
 reviews = importlib.util.module_from_spec(review_spec)
 review_spec.loader.exec_module(reviews)
+nudge_spec = importlib.util.spec_from_file_location('autobuilder_nudges', ROOT / 'scripts/nudges.py')
+nudge_script = importlib.util.module_from_spec(nudge_spec)
+nudge_spec.loader.exec_module(nudge_script)
 
 
 def recommendations(root=None):
@@ -68,10 +72,20 @@ def decisions_data(root=None):
     them (M-H); unreviewed first, then newest first. Read only -- reviews are written by scripts/review_decisions.py."""
     try:
         recs = recommendations(root)
+        loaded = reviews.load(root)
+        # T6-X: what Autobuilder wrote in following each review (its entries name the review they follow)
+        made = {}
+        for d in loaded:
+            if d['entry'].get('follows'):
+                made.setdefault(d['entry']['follows'], []).append(
+                    {k: d['entry'].get(k) for k in ('id', 'kind', 'on', 'tickets')})
+        for d in loaded:
+            d['reviews'] = [{**r, 'followed': made.get(f"review of {r.get('decision')} at {r.get('at')}", [])}
+                            for r in d['reviews']]
         rows = [{'project': d['project'], 'entry': d['entry'], 'reviews': d['reviews'],
                  'needs_review': d.get('needs_review', True),
                  'recommendation': recs.get((d['entry'].get('id'), d['project'])) or recs.get((d['entry'].get('id'), None))}
-                for d in reviews.load(root)]
+                for d in loaded]
         waiting = lambda d: d['needs_review'] and not d['reviews']
         rows.sort(key=lambda d: d['entry'].get('at', ''), reverse=True)
         rows.sort(key=lambda d: not waiting(d))
@@ -166,14 +180,21 @@ def development_data(path=None, ticket_id=None):
         return {'ok': False, 'error': str(error)}
 
 
-def append_review(body, root=None):
-    """T4-EZ, M-H: the Observatory's one write -- a review appended beside a decision (a Claude session's or the
-    operator's). It never changes a decision or anything else; Autobuilder follows the review at its next proposal."""
+def append_review(body, root=None, follow=None):
+    """T4-EZ, M-H: a review appended beside a decision (a Claude session's or the operator's). It never changes a
+    decision; T6-X: Autobuilder is then asked to follow it at once (request_follow), not only at its next proposal.
+    FOLLOW (for tests) replaces request_follow; root given and no FOLLOW = no follow (a test's scratch records)."""
     try:
         value = json.loads(body or b'{}')
+        project = value.get('project') or None
         rec = reviews.review(str(value.get('decision', '')), str(value.get('assessment', '')).upper(),
                              str(value.get('reason', '')), str(value.get('reviewer') or 'operator'), root=root,
-                             project=value.get('project') or None, revises=value.get('revises') or None)
+                             project=project, revises=value.get('revises') or None)
+        if follow is None and root is None:
+            follow = request_follow
+        if follow is not None:
+            rec = {**rec, 'follow': follow(project or reviews.resolve(rec['decision'], rec['assessment'],
+                                                                        rec['reason'], root)['project'])}
         return {'ok': True, 'data': rec}
     except SystemExit as refused:
         return {'ok': False, 'error': str(refused)}
@@ -235,6 +256,8 @@ def start_finding(body, root=None, jar=None, launch=None):
     base = Path(root) if root else FINDINGS_ROOT
     if any(j['state'] == 'running' for j in finding_jobs(base)):
         return {'ok': False, 'error': 'Autobuilder is still looking into the previous request; one at a time'}
+    if launch is None and any(j['state'] == 'running' for j in follow_jobs()):
+        return {'ok': False, 'error': 'Autobuilder is following confirmed reviews; ask again in a minute'}
     if launch is None and run_is_live():
         return {'ok': False, 'error': 'a run is live; ask again when it has ended'}
     about = str(value.get('about') or '').strip() or None
@@ -265,6 +288,148 @@ def start_finding(body, root=None, jar=None, launch=None):
     return {'ok': True, 'data': {'stamp': d.name, 'project': str(project) if project else None, 'about': about}}
 
 
+FOLLOW_ROOT = Path.home() / '.autobuilder' / 'follows'
+ROADMAP_RECORD = 'autobuilder-roadmap'
+
+
+def follow_target(project_name, root=None):
+    """T6-X: what `ProposeCommand --follow-reviews` is started on for a review of a decision in this record: the
+    project's directory, '-' for Autobuilder's own roadmap record, None for an archived copy (its project's state is
+    gone; the review feeds the agreement measure only)."""
+    if project_name == ROADMAP_RECORD:
+        return '-'
+    if not project_name or '(archive ' in project_name:
+        return None
+    candidate = Path(root or ROOT) / 'data' / project_name
+    return str(candidate) if candidate.is_dir() else None
+
+
+def follow_jobs(root=None, limit=5):
+    """T6-X: Autobuilder's recent follow-ups of confirmed reviews, newest first: on which record, and how far it got --
+    running, done (with its own answer, 'followed N review(s)'), or failed."""
+    base = Path(root) if root else FOLLOW_ROOT
+    out = []
+    if not base.is_dir():
+        return out
+    for d in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True)[:limit]:
+        req = _json(d / 'request.json') or {}
+        log = (d / 'out.log').read_text(errors='replace') if (d / 'out.log').is_file() else ''
+        answer = next((l for l in log.splitlines() if l.startswith('PROPOSE: followed')), None)
+        pid = int((d / 'pid').read_text().strip()) if (d / 'pid').is_file() else 0
+        state = 'done' if answer else 'running' if pid and _alive(pid) else 'failed'
+        out.append({'stamp': d.name, 'project': req.get('project'), 'state': state,
+                    'answer': answer[len('PROPOSE: '):] if answer else None,
+                    'error': None if answer or state == 'running' else (log.strip().splitlines() or ['no output'])[-1]})
+    return out
+
+
+def follow_queue(root=None):
+    path = (Path(root) if root else FOLLOW_ROOT) / 'queue.json'
+    value = _json(path) if path.is_file() else None
+    return [p for p in value if isinstance(p, str)] if isinstance(value, list) else []
+
+
+def _write_queue(names, root=None):
+    base = Path(root) if root else FOLLOW_ROOT
+    base.mkdir(parents=True, exist_ok=True)
+    (base / 'queue.json').write_text(json.dumps(names))
+
+
+def request_follow(project_name, root=None, jar=None, launch=None, live=None, data_root=None, findings_root=None):
+    """T6-X: a confirmed review is followed at once. The record's name is queued (once: one follow covers all of a
+    record's new reviews) and the queue is worked off (drain_follows). Returns what the operator is told."""
+    if follow_target(project_name, data_root) is None:
+        return {'state': 'not followed', 'why': 'an archived copy: its project state is gone, so Autobuilder does not '
+                                                'act on it (the review still counts toward the agreement measure)'}
+    names = follow_queue(root)
+    if project_name not in names:
+        _write_queue(names + [project_name], root)
+    started = drain_follows(root, jar, launch, live, data_root, findings_root)
+    return {'state': 'started' if started == project_name else 'queued', 'project': project_name}
+
+
+def drain_follows(root=None, jar=None, launch=None, live=None, data_root=None, findings_root=None):
+    """T6-X: starts the next queued follow-up -- one at a time, not beside an operator's finding still being looked
+    into (both write the roadmap), never while a run is live (the run's own proposal step follows its project's
+    reviews at its end). Called after each review and on each snapshot, so a queued one starts once the way is clear.
+    Returns the record name started, or None."""
+    names = follow_queue(root)
+    if not names:
+        return None
+    if any(j['state'] == 'running' for j in follow_jobs(root)):
+        return None
+    if any(j['state'] == 'running' for j in finding_jobs(findings_root)):
+        return None
+    if (live if live is not None else run_is_live)():
+        return None
+    name, rest = names[0], names[1:]
+    _write_queue(rest, root)
+    target = follow_target(name, data_root)
+    if target is None:
+        return None
+    from datetime import datetime
+    base = Path(root) if root else FOLLOW_ROOT
+    d = base / datetime.now().strftime('%Y-%m-%d_%H-%M-%S-%f')
+    d.mkdir(parents=True, exist_ok=True)
+    (d / 'request.json').write_text(json.dumps({'project': name, 'target': target}, indent=2))
+    cmd = ['java', f'-Dautobuilder.log.root={d / "logs"}',
+           '-Dloader.main=com.walpro.autobuilder.core.propose.ProposeCommand', '-cp', str(jar or JAR),
+           'org.springframework.boot.loader.launch.PropertiesLauncher', target, '--follow-reviews',
+           '--spring.profiles.active=dev-auto,fast', f'--autobuilder.propose.roadmap={ROOT / ".claude-memory" / "roadmap.md"}']
+    if launch is not None:
+        pid = launch(cmd, d)
+    else:
+        import subprocess
+        with open(d / 'out.log', 'w') as out:
+            pid = subprocess.Popen(cmd, cwd=str(ROOT), stdout=out, stderr=subprocess.STDOUT,
+                                   start_new_session=True).pid
+    (d / 'pid').write_text(str(pid))
+    return name
+
+
+def nudges_file(root=None):
+    return Path(root or ROOT) / 'process' / 'reviews' / 'nudges.ndjson'
+
+
+def nudges(root=None):
+    """M-H part 2: the operator's requests for a Claude session's recommendation, each with whether one has come since
+    (scripts/nudges.py: a running session watches the file with --watch; the next session's start reads what is left)."""
+    return nudge_script.load(root)
+
+
+def append_nudge(body, root=None):
+    """M-H part 2: the Observatory asks a running Claude session for a recommendation on open topics. The line carries
+    the decision's id and record name, never text from a run or a draft (the session reads Autobuilder's records
+    itself); a note is the operator's own words and is kept as theirs. A session only RECOMMENDS in answer."""
+    try:
+        value = json.loads(body or b'{}')
+    except ValueError:
+        return {'ok': False, 'error': 'not JSON'}
+    items = value.get('topics') if isinstance(value.get('topics'), list) else [value]
+    note = str(value.get('note') or '').strip()[:2000] or None
+    try:
+        known = {(d['entry'].get('id'), d['project']) for d in reviews.load(root)}
+    except (OSError, ValueError, SystemExit) as error:
+        return {'ok': False, 'error': str(error)}
+    rows = []
+    for it in items:
+        did, project = str((it or {}).get('decision') or ''), str((it or {}).get('project') or '')
+        if (did, project) not in known:
+            return {'ok': False, 'error': f'no decision {did} in {project or "any record"}; nothing written'}
+        rows.append({'decision': did, 'project': project})
+    if not rows:
+        return {'ok': False, 'error': 'no topic named'}
+    from datetime import datetime, timezone
+    at = datetime.now(timezone.utc).isoformat()
+    path = nudges_file(root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'a', encoding='utf-8') as f:
+        for r in rows:
+            f.write(json.dumps({**r, 'at': at, 'by': 'operator', **({'note': note} if note else {})},
+                               ensure_ascii=False) + '\n')
+    return {'ok': True, 'data': {'nudged': len(rows), 'at': at}}
+
+
 class Handler(SimpleHTTPRequestHandler):
     def end_headers(self):
         # The page's own files change as the Observatory is developed; without this a browser keeps running a cached
@@ -282,12 +447,13 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
-        if self.path not in ('/api/reviews', '/api/findings'):
+        writes = {'/api/reviews': append_review, '/api/findings': start_finding, '/api/nudges': append_nudge}
+        if self.path not in writes:
             self.send_error(404)
             return
         length = int(self.headers.get('Content-Length') or 0)
         body = self.rfile.read(min(length, 64 * 1024))
-        value = append_review(body) if self.path == '/api/reviews' else start_finding(body)
+        value = writes[self.path](body)
         self.send_json(value, 200 if value['ok'] else 400)
 
     def do_GET(self):
@@ -307,6 +473,9 @@ class Handler(SimpleHTTPRequestHandler):
             result['development'] = development_data()
             result['decisions'] = decisions_data()
             result['findings'] = {'ok': True, 'data': finding_jobs()}
+            drain_follows()   # T6-X: a follow-up queued behind a run or a request starts once the way is clear
+            result['follows'] = {'ok': True, 'data': {'jobs': follow_jobs(), 'queued': follow_queue()}}
+            result['nudges'] = {'ok': True, 'data': nudges()}
             result['meta'] = {'ok': True, 'data': collect()}
             self.send_json(result)
         elif self.path.startswith('/api/'):

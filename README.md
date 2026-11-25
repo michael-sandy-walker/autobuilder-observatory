@@ -39,8 +39,17 @@ Own decisions lists the decisions Autobuilder took on its own: the drafts it che
 project's `meta/decisions.ndjson`) and what it did to its roadmap (`.claude-memory/decisions.ndjson`: tickets
 created, changed, retracted), unreviewed first. Each entry has a review form; it is the Observatory's one write and
 only APPENDS a review (AGREE / DISAGREE / QUESTION with a reason) beside the entry, in `decision-reviews.ndjson`.
-Autobuilder follows a review at its next proposal: DISAGREE on a ticket it created retracts it, QUESTION and AGREE
-are appended to the ticket. The same is done from a terminal with `scripts/review_decisions.py`.
+Autobuilder follows a review appended here at once (T6-X): the server starts `ProposeCommand <project> --follow-reviews`
+from the built jar (`-` for its own roadmap decisions), one at a time, never while a run is live or a finding is being
+looked into; a waiting one starts by itself once the way is clear, and the panel "Autobuilder following your reviews"
+shows each follow-up and its answer. DISAGREE on a ticket it created retracts it, QUESTION and AGREE are appended to the
+ticket; what it wrote is shown under each review. A review of an archived copy is not followed. The same review is
+written from a terminal with `scripts/review_decisions.py` (followed then at the next proposal or by hand).
+
+A topic with no recommendation can be handed to a Claude session (M-H part 2): "Ask a Claude session to recommend"
+appends the decision's id, its record and an optional note in your words to `process/reviews/nudges.ndjson`. A running
+session watches that file (`scripts/nudges.py --watch`); with none running, the next session reads what is waiting at
+its start. The session only writes a recommendation, which then appears beside the topic for you to confirm.
 
 Export downloads the latest live snapshot. The original example implementation
 is preserved in `dist/app.js` but is no longer loaded. Browser records from the

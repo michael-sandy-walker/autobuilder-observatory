@@ -198,3 +198,125 @@ class FiledByAutobuilderTest(unittest.TestCase):
                 f.write(json.dumps({'id': 'T4-BB#1', 'at': '3', 'kind': 'TICKET_CREATED', 'tickets': ['T4-BB'], 'follows': 'run#1'}) + '\n')
                 f.write(json.dumps({'id': 'T1-AA#2', 'at': '4', 'kind': 'TICKET_CHANGED', 'tickets': ['T1-CC']}) + '\n')
             self.assertEqual(filed_by_autobuilder(root), {'T1-AA': 'autobuilder', 'T4-BB': 'your finding'})
+
+
+class FollowReviewTest(unittest.TestCase):
+    """T6-X: a confirmed review is followed at once -- one follow job per record, one at a time, never beside a live
+    run or an operator's finding still being looked into; a queued one starts once the way is clear."""
+
+    def setUp(self):
+        import os, tempfile
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory()
+        base = Path(self.tmp.name)
+        self.follows, self.findings, self.data = base / 'follows', base / 'findings', base / 'repo'
+        (self.data / 'data' / 'p').mkdir(parents=True)
+        self.started = []
+        self.alive = True
+
+        def launch(cmd, d):
+            self.started.append(cmd)
+            (Path(d) / 'out.log').write_text('')
+            return os.getpid() if self.alive else 999999999
+        self.launch = launch
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def follow(self, name, live=False):
+        from server import request_follow
+        return request_follow(name, root=self.follows, launch=self.launch, live=lambda: live,
+                              data_root=self.data, findings_root=self.findings)
+
+    def test_a_review_with_no_run_live_starts_exactly_one_follow_for_its_project(self):
+        got = self.follow('p')
+        self.assertEqual(got['state'], 'started')
+        self.assertEqual(len(self.started), 1)
+        cmd = self.started[0]
+        launcher = cmd.index('org.springframework.boot.loader.launch.PropertiesLauncher')
+        self.assertEqual(cmd[launcher + 1], str(self.data / 'data' / 'p'))
+        self.assertIn('--follow-reviews', cmd)
+
+    def test_the_roadmaps_own_record_is_followed_with_no_project_and_an_archive_not_at_all(self):
+        self.follow('autobuilder-roadmap')
+        launcher = self.started[0].index('org.springframework.boot.loader.launch.PropertiesLauncher')
+        self.assertEqual(self.started[0][launcher + 1], '-')
+        self.assertEqual(self.follow('p (archive 2026-11-22_01-00-00)')['state'], 'not followed')
+        self.assertEqual(len(self.started), 1)
+
+    def test_none_while_a_run_is_live_and_the_queued_one_starts_after(self):
+        from server import drain_follows, follow_queue
+        self.assertEqual(self.follow('p', live=True)['state'], 'queued')
+        self.assertEqual(self.started, [])
+        self.assertEqual(follow_queue(self.follows), ['p'])
+        self.assertEqual(drain_follows(self.follows, launch=self.launch, live=lambda: False, data_root=self.data,
+                                       findings_root=self.findings), 'p')
+        self.assertEqual(len(self.started), 1)
+        self.assertEqual(follow_queue(self.follows), [])
+
+    def test_a_second_review_while_one_runs_queues_once_rather_than_starting_a_second(self):
+        from server import follow_queue, follow_jobs
+        self.follow('p')
+        self.assertEqual(self.follow('autobuilder-roadmap')['state'], 'queued')
+        self.assertEqual(self.follow('autobuilder-roadmap')['state'], 'queued')
+        self.assertEqual(len(self.started), 1)
+        self.assertEqual(follow_queue(self.follows), ['autobuilder-roadmap'])
+        self.assertEqual([j['state'] for j in follow_jobs(self.follows)], ['running'])
+
+    def test_a_finished_follow_shows_autobuilders_answer(self):
+        from pathlib import Path
+        from server import follow_jobs
+        self.alive = False
+        self.follow('p')
+        d = [x for x in Path(self.follows).iterdir() if x.is_dir()][0]
+        (d / 'out.log').write_text('noise\nPROPOSE: followed 2 review(s)\n')
+        self.assertEqual(follow_jobs(self.follows)[0]['state'], 'done')
+        self.assertEqual(follow_jobs(self.follows)[0]['answer'], 'followed 2 review(s)')
+
+    def test_append_review_asks_for_the_follow_of_the_reviewed_decisions_record(self):
+        import json
+        from pathlib import Path
+        from server import append_review
+        own = Path(self.data, '.claude-memory')
+        own.mkdir()
+        (own / 'decisions.ndjson').write_text(json.dumps({'id': 'T1-BA#1', 'at': '2026-11-22T01:00:00Z'}) + '\n')
+        asked = []
+        ok = append_review(json.dumps({'decision': 'T1-BA#1', 'assessment': 'AGREE', 'reason': 'r'}).encode(),
+                           str(self.data), follow=lambda name: asked.append(name) or {'state': 'started'})
+        self.assertTrue(ok['ok'])
+        self.assertEqual(asked, ['autobuilder-roadmap'])
+        self.assertEqual(ok['data']['follow'], {'state': 'started'})
+
+
+class NudgeTest(unittest.TestCase):
+    """M-H part 2: a nudge names known topics only, carries ids and the operator's own note, and counts as answered once
+    a recommendation for the decision is written after it."""
+
+    def test_nudges_are_appended_checked_and_answered_by_a_later_recommendation(self):
+        import json, tempfile
+        from pathlib import Path
+        from server import append_nudge, nudges
+        with tempfile.TemporaryDirectory() as root:
+            own = Path(root, '.claude-memory'); own.mkdir()
+            (own / 'decisions.ndjson').write_text(json.dumps({'id': 'T1-BA#1', 'at': '1'}) + '\n'
+                                                  + json.dumps({'id': 'T1-BA#2', 'at': '2'}) + '\n')
+            bad = append_nudge(json.dumps({'topics': [{'decision': 'T1-BA#1', 'project': 'autobuilder-roadmap'},
+                                                      {'decision': 'nope', 'project': 'autobuilder-roadmap'}]}).encode(), root)
+            self.assertFalse(bad['ok'])
+            self.assertEqual(nudges(root), [], 'one unknown topic writes nothing')
+            ok = append_nudge(json.dumps({'topics': [{'decision': 'T1-BA#1', 'project': 'autobuilder-roadmap'},
+                                                     {'decision': 'T1-BA#2', 'project': 'autobuilder-roadmap'}],
+                                          'note': 'is this one still true?'}).encode(), root)
+            self.assertTrue(ok['ok'])
+            got = nudges(root)
+            self.assertEqual([(n['decision'], n['answered'], n['note'], n['by']) for n in got],
+                             [('T1-BA#1', False, 'is this one still true?', 'operator'),
+                              ('T1-BA#2', False, 'is this one still true?', 'operator')])
+            rec = Path(root, 'process', 'reviews', 'recommendations.ndjson')
+            rec.write_text(json.dumps({'decision': 'T1-BA#1', 'assessment': 'AGREE', 'reason': 'r',
+                                       'at': '2000-01-01T00:00:00+00:00'}) + '\n')
+            self.assertFalse(nudges(root)[0]['answered'], 'a recommendation from before the nudge does not answer it')
+            with open(rec, 'a') as f:
+                f.write(json.dumps({'decision': 'T1-BA#1', 'assessment': 'AGREE', 'reason': 'r',
+                                    'at': '2999-01-01T00:00:00+00:00'}) + '\n')
+            self.assertEqual([n['answered'] for n in nudges(root)], [True, False])
