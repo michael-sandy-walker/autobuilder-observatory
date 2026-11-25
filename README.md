@@ -41,8 +41,8 @@ created, changed, retracted), unreviewed first. Each entry has a review form; it
 only APPENDS a review (AGREE / DISAGREE / QUESTION with a reason) beside the entry, in `decision-reviews.ndjson`.
 Autobuilder follows a review appended here at once (T6-X): the server starts `ProposeCommand <project> --follow-reviews`
 from the built jar (`-` for its own roadmap decisions), one at a time, never while a run is live or a finding is being
-looked into; a waiting one starts by itself once the way is clear, and the panel "Autobuilder following your reviews"
-shows each follow-up and its answer. DISAGREE on a ticket it created retracts it, QUESTION and AGREE are appended to the
+looked into; a waiting one starts by itself once the way is clear, and the panel "Your reviews carried out on the roadmap"
+shows each pass -- click one to see the review it carried out, the decision it was about and the roadmap lines it wrote. DISAGREE on a ticket it created retracts it, QUESTION and AGREE are appended to the
 ticket; what it wrote is shown under each review. A review of an archived copy is not followed. The same review is
 written from a terminal with `scripts/review_decisions.py` (followed then at the next proposal or by hand).
 

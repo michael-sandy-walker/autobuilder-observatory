@@ -304,22 +304,80 @@ def follow_target(project_name, root=None):
     return str(candidate) if candidate.is_dir() else None
 
 
-def follow_jobs(root=None, limit=5):
-    """T6-X: Autobuilder's recent follow-ups of confirmed reviews, newest first: on which record, and how far it got --
-    running, done (with its own answer, 'followed N review(s)'), or failed."""
+def _epoch(at):
+    """An entry's ISO time ('2026-11-25T18:15:48.594988391Z', nanoseconds allowed) as seconds, or None."""
+    from datetime import datetime
+    import re
+    m = re.match(r'(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d+)?(Z|[+-]\d\d:\d\d)?$', str(at or ''))
+    if not m:
+        return None
+    frac = (m.group(2) or '.0')[:7]
+    zone = m.group(3) or 'Z'
+    try:
+        return datetime.fromisoformat(m.group(1) + frac + ('+00:00' if zone == 'Z' else zone)).timestamp()
+    except ValueError:
+        return None
+
+
+def follow_detail(job_dir, loaded, roadmap_tickets):
+    """T6-X, what one follow-up did: each entry Autobuilder wrote while it ran (an entry naming the review it follows),
+    with that review, the decision the review was about, and the roadmap lines the follow-up added to the ticket.
+    LOADED: reviews.load(); ROADMAP_TICKETS: next_work.parse() of the roadmap."""
+    start_file, end_file = job_dir / 'request.json', job_dir / 'out.log'
+    if not start_file.is_file():
+        return []
+    start = start_file.stat().st_mtime - 1
+    end = (end_file.stat().st_mtime if end_file.is_file() else start) + 1
+    by_id = {}
+    for d in loaded:
+        by_id.setdefault(d['entry'].get('id'), d)
+    tickets = {t['id']: t for t in roadmap_tickets}
+    out = []
+    for d in loaded:
+        e = d['entry']
+        t = _epoch(e.get('at'))
+        follows = str(e.get('follows') or '')
+        if not follows.startswith('review of ') or t is None or not (start <= t <= end):
+            continue
+        reviewed_id, _, review_at = follows[len('review of '):].partition(' at ')
+        reviewed = by_id.get(reviewed_id)
+        review = next((r for r in (reviewed or {}).get('reviews', []) if str(r.get('at')) == review_at), None)
+        reason = str((review or {}).get('reason') or '')
+        lines = []
+        for tid in e.get('tickets') or []:
+            body = tickets.get(tid, {}).get('body', [])
+            lines += [l.strip() for l in body if f'`{reviewed_id}`' in l and (not reason or reason[:60] in l)]
+        out.append({'entry': {k: e.get(k) for k in ('id', 'kind', 'at', 'on', 'decision', 'tickets')},
+                    'project': d['project'],
+                    'review': review and {k: review.get(k) for k in ('assessment', 'reviewer', 'reason', 'at')},
+                    'reviewed': reviewed and {'project': reviewed['project'], **{k: reviewed['entry'].get(k)
+                                              for k in ('id', 'kind', 'on', 'decision', 'tickets')}},
+                    'roadmap': lines})
+    return sorted(out, key=lambda x: x['entry'].get('at') or '')
+
+
+def follow_jobs(root=None, limit=5, loaded=None, roadmap_tickets=None):
+    """T6-X: Autobuilder's recent follow-ups of confirmed reviews, newest first: on which record, how far it got --
+    running, done (with its own answer, 'followed N review(s)'), or failed -- and, given LOADED and ROADMAP_TICKETS,
+    what each one did (follow_detail)."""
     base = Path(root) if root else FOLLOW_ROOT
     out = []
     if not base.is_dir():
         return out
-    for d in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True)[:limit]:
+    for d in sorted((p for p in base.iterdir() if p.is_dir()), reverse=True):
+        if len(out) >= limit:
+            break
         req = _json(d / 'request.json') or {}
         log = (d / 'out.log').read_text(errors='replace') if (d / 'out.log').is_file() else ''
         answer = next((l for l in log.splitlines() if l.startswith('PROPOSE: followed')), None)
+        if answer == 'PROPOSE: followed 0 review(s)':
+            continue   # a pass queued behind one that already carried out its reviews: it did nothing to show
         pid = int((d / 'pid').read_text().strip()) if (d / 'pid').is_file() else 0
         state = 'done' if answer else 'running' if pid and _alive(pid) else 'failed'
         out.append({'stamp': d.name, 'project': req.get('project'), 'state': state,
                     'answer': answer[len('PROPOSE: '):] if answer else None,
-                    'error': None if answer or state == 'running' else (log.strip().splitlines() or ['no output'])[-1]})
+                    'error': None if answer or state == 'running' else (log.strip().splitlines() or ['no output'])[-1],
+                    'did': follow_detail(d, loaded, roadmap_tickets) if loaded is not None and state != 'running' else []})
     return out
 
 
@@ -474,7 +532,12 @@ class Handler(SimpleHTTPRequestHandler):
             result['decisions'] = decisions_data()
             result['findings'] = {'ok': True, 'data': finding_jobs()}
             drain_follows()   # T6-X: a follow-up queued behind a run or a request starts once the way is clear
-            result['follows'] = {'ok': True, 'data': {'jobs': follow_jobs(), 'queued': follow_queue()}}
+            try:
+                loaded, roadmap_tickets = reviews.load(), queue.parse(str(ROOT / '.claude-memory' / 'roadmap.md'))
+            except (OSError, ValueError, SystemExit):
+                loaded, roadmap_tickets = None, None
+            result['follows'] = {'ok': True, 'data': {'jobs': follow_jobs(loaded=loaded, roadmap_tickets=roadmap_tickets),
+                                                      'queued': follow_queue()}}
             result['nudges'] = {'ok': True, 'data': nudges()}
             result['meta'] = {'ok': True, 'data': collect()}
             self.send_json(result)

@@ -272,6 +272,11 @@ class FollowReviewTest(unittest.TestCase):
         (d / 'out.log').write_text('noise\nPROPOSE: followed 2 review(s)\n')
         self.assertEqual(follow_jobs(self.follows)[0]['state'], 'done')
         self.assertEqual(follow_jobs(self.follows)[0]['answer'], 'followed 2 review(s)')
+        self.follow('p')
+        empty = max(x for x in Path(self.follows).iterdir() if x.is_dir())
+        (empty / 'out.log').write_text('PROPOSE: followed 0 review(s)\n')
+        self.assertEqual([j['answer'] for j in follow_jobs(self.follows)], ['followed 2 review(s)'],
+                         'a pass that carried out nothing is not listed')
 
     def test_append_review_asks_for_the_follow_of_the_reviewed_decisions_record(self):
         import json
@@ -320,3 +325,37 @@ class NudgeTest(unittest.TestCase):
                 f.write(json.dumps({'decision': 'T1-BA#1', 'assessment': 'AGREE', 'reason': 'r',
                                     'at': '2999-01-01T00:00:00+00:00'}) + '\n')
             self.assertEqual([n['answered'] for n in nudges(root)], [True, False])
+
+
+class FollowDetailTest(unittest.TestCase):
+    """T6-X: a follow-up opened shows what it did -- the entry written while it ran, the review it carried out, the
+    decision that review was about, and the roadmap line it added; an entry from outside its time is not its own."""
+
+    def test_the_entries_written_while_it_ran_with_their_review_decision_and_roadmap_line(self):
+        import os, tempfile, time
+        from datetime import datetime, timezone
+        from pathlib import Path
+        from server import follow_detail
+        with tempfile.TemporaryDirectory() as root:
+            job = Path(root, 'job'); job.mkdir()
+            (job / 'request.json').write_text('{}'); (job / 'out.log').write_text('PROPOSE: followed 1 review(s)\n')
+            now = time.time()
+            os.utime(job / 'request.json', (now, now)); os.utime(job / 'out.log', (now + 2, now + 2))
+            iso = lambda t: datetime.fromtimestamp(t, timezone.utc).strftime('%Y-%m-%dT%H:%M:%S.%f') + '123Z'
+            review = {'decision': 'T4-AA#2', 'assessment': 'AGREE', 'reason': 'Right: a duplicate', 'reviewer': 'op',
+                      'at': '2026-11-25T18:20:35.99+00:00'}
+            loaded = [
+                {'project': 'autobuilder-roadmap', 'entry': {'id': 'T4-AA#2', 'kind': 'TICKET_CHANGED', 'on': 'T4-AA: x',
+                 'decision': 'appended evidence', 'tickets': ['T4-AA']}, 'reviews': [review]},
+                {'project': 'autobuilder-roadmap', 'entry': {'id': 'T4-AA#4', 'kind': 'TICKET_CHANGED', 'at': iso(now + 1),
+                 'decision': 'appended the agree', 'tickets': ['T4-AA'],
+                 'follows': 'review of T4-AA#2 at 2026-11-25T18:20:35.99+00:00'}, 'reviews': []},
+                {'project': 'autobuilder-roadmap', 'entry': {'id': 'T4-AA#3', 'kind': 'TICKET_CHANGED', 'at': iso(now - 3600),
+                 'tickets': ['T4-AA'], 'follows': 'review of T4-AA#1 at x'}, 'reviews': []}]
+            roadmap = [{'id': 'T4-AA', 'body': ['  - an older note on `T4-AA#2`',
+                                                '  - **reviewed: op agreed with decision `T4-AA#2`.** Right: a duplicate']}]
+            got = follow_detail(job, loaded, roadmap)
+        self.assertEqual([g['entry']['id'] for g in got], ['T4-AA#4'])
+        self.assertEqual(got[0]['review']['assessment'], 'AGREE')
+        self.assertEqual(got[0]['reviewed']['decision'], 'appended evidence')
+        self.assertEqual(got[0]['roadmap'], ['- **reviewed: op agreed with decision `T4-AA#2`.** Right: a duplicate'])
