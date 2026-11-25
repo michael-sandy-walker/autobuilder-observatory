@@ -351,7 +351,7 @@ def follow_detail(job_dir, loaded, roadmap_tickets):
                     'project': d['project'],
                     'review': review and {k: review.get(k) for k in ('assessment', 'reviewer', 'reason', 'at')},
                     'reviewed': reviewed and {'project': reviewed['project'], **{k: reviewed['entry'].get(k)
-                                              for k in ('id', 'kind', 'on', 'decision', 'tickets')}},
+                                              for k in ('id', 'kind', 'at', 'on', 'decision', 'tickets')}},
                     'roadmap': lines})
     return sorted(out, key=lambda x: x['entry'].get('at') or '')
 
