@@ -14,6 +14,10 @@ function evidence(rows,message){return rows.length?`<div class="timeline">${rows
 // M-H: what a review makes Autobuilder do, by the kind of entry and where it is recorded (TicketActions).
 // What a decision is about, in words: a carry-through entry's own label names only the attempt.
 const topicTitle=e=>{const on=String(e.on||''),t=(e.tickets||[])[0]||'',m=on.match(/^carry-through (\S+)/),att=m?m[1]:'';
+ if(!m)return on;
+ if(e.kind==='TICKET_SELECTED')return `Autobuilder chose ${t||'no ticket'} to work on by itself (attempt ${att})`;
+ if(e.kind==='TICKET_CLOSED')return `Autobuilder closed ${t} after working on it by itself (attempt ${att})`;
+ const why=String(e.decision||'').replace(/^left open:\s*/,'');return `Autobuilder left ${t} open after working on it by itself (attempt ${att}): ${why}`};
 // A decision named for the operator: what Autobuilder did and when, in local time -- never the bare id ('T1-GX#14' is
 // Autobuilder's 14th decision on T1-GX, stable but meaningless without a lookup). The id follows, small, for a session.
 const whenLocal=at=>{const m=String(at||'').match(/^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(\.\d{1,3})?\d*(Z|[+-]\d\d:\d\d)?$/);if(!m)return '';const d=new Date(m[1]+(m[2]||'')+(m[3]||'Z'));return isNaN(d)?'':d.toLocaleString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})};
@@ -23,10 +27,6 @@ const decWhat=e=>{const t=(e.tickets||[])[0]||'',dz=String(e.decision||''),k=e.k
  if(k==='DRAFT_CHECKED')return `checked a draft from a run ("${on}")`;if(k==='DRAFT_INVESTIGATED')return `looked into a draft ("${on}")`;if(k==='OPERATOR_FINDING')return `took your finding ("${on}")`;return `${k.toLowerCase().replace(/_/g,' ')} ${t}`.trim()};
 const decText=e=>`Autobuilder ${decWhat(e)}${whenLocal(e.at)?', '+whenLocal(e.at):''}`;
 const decName=e=>`${esc(decText(e))} <small style="opacity:.7">(${esc(e.id)})</small>`;
- if(!m)return on;
- if(e.kind==='TICKET_SELECTED')return `Autobuilder chose ${t||'no ticket'} to work on by itself (attempt ${att})`;
- if(e.kind==='TICKET_CLOSED')return `Autobuilder closed ${t} after working on it by itself (attempt ${att})`;
- const why=String(e.decision||'').replace(/^left open:\s*/,'');return `Autobuilder left ${t} open after working on it by itself (attempt ${att}): ${why}`};
 const effectOf=(d,a)=>{const e=d.entry,c=e.checker||{},kept=/KEEP|CORRECT/.test(c.outcome||''),own=d.project==='autobuilder-roadmap';
  if(d.project.includes('(archive '))return 'recorded only; Autobuilder does not act on it (the project\'s state is gone)';
  if(a==='DISAGREE')return own?(e.kind==='TICKET_CREATED'?'Autobuilder retracts the ticket it created':e.kind==='TICKET_CHANGED'?'Autobuilder withdraws the note it appended':e.kind==='TICKET_CLOSED'?'Autobuilder re-opens the ticket it closed':'recorded; a session acts on it (M-H)'):e.kind==='DRAFT_INVESTIGATED'?'Autobuilder investigates the draft once more, with your reason':kept?'Autobuilder retracts what was made of the draft':'Autobuilder acts on the draft after all';

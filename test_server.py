@@ -359,3 +359,45 @@ class FollowDetailTest(unittest.TestCase):
         self.assertEqual(got[0]['review']['assessment'], 'AGREE')
         self.assertEqual(got[0]['reviewed']['decision'], 'appended evidence')
         self.assertEqual(got[0]['roadmap'], ['- **reviewed: op agreed with decision `T4-AA#2`.** Right: a duplicate'])
+
+
+class PageDrawsTest(unittest.TestCase):
+    """2026-11-25: a helper inserted inside another function left 'Own decisions' unable to draw ('data unavailable')
+    while every syntax check passed. The page is drawn here against a snapshot with a reviewed decision, a follow-up
+    carrying out its review, a recommendation and a nudge; any view that throws fails the test."""
+
+    def test_every_view_draws(self):
+        import json, shutil, subprocess, tempfile
+        from pathlib import Path
+        from server import decisions_data, development_data
+        if not shutil.which('node'):
+            self.skipTest('node not installed')
+        here = Path(__file__).resolve().parent
+        with tempfile.TemporaryDirectory() as root:
+            own = Path(root, '.claude-memory'); own.mkdir()
+            (own / 'decisions.ndjson').write_text('\n'.join(json.dumps(x) for x in [
+                {'id': 'T4-AA#1', 'at': '2026-11-22T18:16:22.399937083Z', 'kind': 'TICKET_CHANGED', 'on': 'T4-AA: x',
+                 'tickets': ['T4-AA'], 'decision': "appended the run's evidence to T4-AA", 'why': 'w',
+                 'read': [{'source': 'a', 'line': 1, 'text': 't', 'holds': True}]},
+                {'id': 'T4-AA#2', 'at': '2026-11-25T18:20:38.042255310Z', 'kind': 'TICKET_CHANGED', 'on': 'T4-AA',
+                 'tickets': ['T4-AA'], 'decision': "appended the review by op's disagree to T4-AA", 'why': 'r',
+                 'follows': 'review of T4-AA#1 at 2026-11-25T18:20:35+00:00'},
+                {'id': 'T4-AA#3', 'at': '2026-11-25T19:00:00Z', 'kind': 'TICKET_CREATED', 'on': 'T4-AB: y',
+                 'tickets': ['T4-AB'], 'decision': 'created T4-AB', 'why': 'w'}]) + '\n')
+            (own / 'decision-reviews.ndjson').write_text(json.dumps(
+                {'decision': 'T4-AA#1', 'assessment': 'DISAGREE', 'reason': 'r', 'reviewer': 'op',
+                 'at': '2026-11-25T18:20:35+00:00'}) + '\n')
+            (own / 'roadmap.md').write_text('## Tier 4\n- [ ] **T4-AA: x** body\n')
+            snap = {'decisions': decisions_data(root), 'development': development_data(own / 'roadmap.md'),
+                    'findings': {'ok': True, 'data': []},
+                    'follows': {'ok': True, 'data': {'jobs': [], 'queued': ['autobuilder-roadmap']}},
+                    'nudges': {'ok': True, 'data': [{'decision': 'T4-AA#3', 'project': 'autobuilder-roadmap',
+                                                     'at': '2026-11-25T19:01:00+00:00', 'answered': False}]},
+                    'meta': {'ok': False, 'error': 'not read in this test'}}
+            snap['decisions']['data']['decisions'][0]['recommendation'] = {
+                'assessment': 'AGREE', 'reason': 'r', 'by': 'a session', 'at': '2026-11-25T17:00:00+00:00'}
+            path = Path(root, 'snap.json'); path.write_text(json.dumps(snap))
+            out = subprocess.run(['node', str(here / 'check_page.js'), str(here / 'dist' / 'live.js'), str(path)],
+                                 capture_output=True, text=True, timeout=60)
+        self.assertEqual(out.returncode, 0, out.stdout + out.stderr)
+        self.assertNotIn('ERROR', out.stdout)
